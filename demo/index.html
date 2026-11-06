@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>bonsai-garden — local skeleton</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1a1010; color: #fdfac2; font-family: "Andale Mono", ui-monospace, monospace; }
+  body { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 12px; box-sizing: border-box; }
+  canvas { background: #660000; image-rendering: pixelated; max-width: 100%; height: auto; border: 1px solid #5c5f50; }
+  .bar { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+  button { font: inherit; background: #333832; color: #fdfac2; border: 1px solid #909074; padding: 4px 10px; cursor: pointer; }
+  button:hover { background: #42473d; }
+  .note { font-size: 12px; color: #c1be96; max-width: 920px; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <button id="play" type="button">Play the four beats</button>
+  <span id="status">idle</span>
+</div>
+<canvas id="c" width="960" height="480"></canvas>
+<p class="note">Local only. Not published. One busy agent leaves the shelf, its name and one task line appear by the pot, the monk rakes, the cost number moves. The cat stays.</p>
+<script>
+const PIECES = "pieces/"
+const shelfNames = []
+for (let i = 1; i <= 11; i++) shelfNames.push("2026-11-06-bonsai-etagere-" + String(i).padStart(2, "0") + ".png")
+const files = shelfNames.concat([
+  "2026-11-06-bonsai-piedestal.png",
+  "2026-11-06-moine.png",
+  "2026-11-06-chat.png",
+])
+const img = {}
+function loadAll() {
+  return Promise.all(files.map(name => new Promise((ok, bad) => {
+    const el = new Image()
+    el.onload = () => { img[name] = el; ok() }
+    el.onerror = () => bad(new Error(name))
+    el.src = PIECES + name
+  })))
+}
+
+const W = 960, H = 480
+const c = document.getElementById("c")
+const g = c.getContext("2d")
+g.imageSmoothingEnabled = false
+
+const shelf = { x: 36, y: 150, cols: 4, rows: 3, cw: 70, ch: 78 }
+const pad = { x: 620, y: 300 }
+const monkAt = { x: 500, y: 168 }
+const catAt = { x: 300, y: 340 }
+
+const state = {
+  t: 0,
+  playing: false,
+  leftShelf: false,
+  onPad: 0,
+  caption: 0,
+  monk: 0,
+  cost: 0,
+  rake: 0,
+  walk: 0,
+}
+
+function cellPos(i) {
+  const col = i % shelf.cols
+  const row = Math.floor(i / shelf.cols)
+  return { x: shelf.x + 8 + col * shelf.cw, y: shelf.y + 8 + row * shelf.ch }
+}
+
+function drawShelf() {
+  g.strokeStyle = "#c1be96"
+  g.lineWidth = 2
+  g.strokeRect(shelf.x, shelf.y, shelf.cols * shelf.cw + 8, shelf.rows * shelf.ch + 8)
+  for (let r = 1; r < shelf.rows; r++) {
+    const y = shelf.y + r * shelf.ch + 4
+    g.beginPath(); g.moveTo(shelf.x, y); g.lineTo(shelf.x + shelf.cols * shelf.cw + 8, y); g.stroke()
+  }
+  for (let c = 1; c < shelf.cols; c++) {
+    const x = shelf.x + c * shelf.cw + 4
+    g.beginPath(); g.moveTo(x, shelf.y); g.lineTo(x, shelf.y + shelf.rows * shelf.ch + 8); g.stroke()
+  }
+}
+
+function drawSand(rake) {
+  g.save()
+  g.translate(520, 250)
+  g.beginPath()
+  g.moveTo(0, -70); g.lineTo(150, 10); g.lineTo(0, 90); g.lineTo(-150, 10); g.closePath()
+  g.fillStyle = "#cccc99"
+  g.fill()
+  g.strokeStyle = "#5c5f50"
+  g.stroke()
+  g.strokeStyle = "#7e8069"
+  g.lineWidth = 1
+  for (let i = -3; i <= 3; i++) {
+    const shift = Math.sin(rake + i) * 4
+    g.beginPath()
+    g.moveTo(-90 + shift, 10 + i * 8)
+    g.quadraticCurveTo(0, 10 + i * 8 + shift, 90 - shift, 10 + i * 8)
+    g.stroke()
+  }
+  g.restore()
+}
+
+function drawStones() {
+  g.save()
+  g.translate(520, 250)
+  const stones = [
+    [-85, 30, 32, 24],
+    [-30, 50, 38, 22],
+    [70, 62, 28, 18],
+    [-100, 52, 26, 16],
+    [100, 48, 34, 20],
+  ]
+  stones.forEach(([x, y, w, h]) => {
+    g.fillStyle = "#909074"
+    g.fillRect(x, y, w, 3)
+    g.fillRect(x, y + 3, 3, h - 3)
+    g.fillStyle = "#5c5f50"
+    g.fillRect(x + 3, y + 3, w - 6, h - 6)
+    g.fillStyle = "#333832"
+    g.fillRect(x + w - 3, y + 3, 3, h - 3)
+    g.fillRect(x + 3, y + h - 3, w - 6, 3)
+  })
+  g.restore()
+}
+
+function drawBox(x, y, w, h, label) {
+  g.fillStyle = "#111"
+  g.fillRect(x, y, w, h)
+  g.strokeStyle = "#fdfac2"
+  g.strokeRect(x, y, w, h)
+  g.fillStyle = "#fdfac2"
+  g.font = "13px Andale Mono, monospace"
+  g.fillText(label, x + 8, y + 18)
+}
+
+function blit(name, x, y, maxH) {
+  const el = img[name]
+  if (!el) return
+  const s = maxH / el.height
+  g.drawImage(el, x, y, Math.round(el.width * s), Math.round(el.height * s))
+}
+
+function frame() {
+  g.imageSmoothingEnabled = false
+  g.fillStyle = "#660000"
+  g.fillRect(0, 0, W, H)
+
+  drawBox(24, 16, 140, 28, "Time")
+  drawBox(180, 16, 160, 28, "date")
+  drawBox(360, 16, 160, 28, "crons")
+  g.fillStyle = "#fdfac2"
+  g.font = "14px Andale Mono, monospace"
+  g.fillText("Autumn : one line of seasonal work", 24, 68)
+
+  drawShelf()
+  drawSand(state.rake)
+  drawStones()
+  blit("2026-11-06-chat.png", catAt.x, catAt.y, 48)
+
+  shelfNames.forEach((name, i) => {
+    if (state.leftShelf && i === 0) return
+    const p = cellPos(i)
+    blit(name, p.x, p.y, 52)
+  })
+
+  if (state.onPad > 0) {
+    const tree = img["2026-11-06-bonsai-piedestal.png"]
+    const h = 64
+    const s = h / tree.height
+    const x = pad.x
+    const y = pad.y - Math.round((1 - state.onPad) * 30)
+    g.globalAlpha = state.onPad
+    g.drawImage(tree, x, y, Math.round(tree.width * s), h)
+    g.globalAlpha = 1
+    g.fillStyle = "#111"
+    g.fillRect(x - 8, y + h + 4, 14, 8)
+  }
+
+  if (state.caption > 0) {
+    g.globalAlpha = state.caption
+    g.fillStyle = "#fdfac2"
+    g.font = "14px Andale Mono, monospace"
+    g.fillText("Cloe", pad.x, pad.y + 86)
+    g.font = "12px Andale Mono, monospace"
+    g.fillText("bonsai-garden skeleton", pad.x, pad.y + 102)
+    g.globalAlpha = 1
+  }
+
+  if (state.monk > 0) {
+    const m = img["2026-11-06-moine.png"]
+    const h = 90
+    const s = h / m.height
+    const dw = Math.round(m.width * s)
+    g.globalAlpha = state.monk
+    const walk = Math.sin(state.walk) * 64
+    const face = Math.cos(state.walk) >= 0 ? 1 : -1
+    g.save()
+    g.translate(monkAt.x + walk + dw / 2, monkAt.y)
+    g.scale(face, 1)
+    g.drawImage(m, -dw / 2, 0, dw, h)
+    g.restore()
+    g.globalAlpha = 1
+  }
+
+  drawBox(760, 400, 170, 36, "costs  $" + state.cost.toFixed(2))
+}
+
+const status = document.getElementById("status")
+function setStatus(s) { status.textContent = s }
+
+function play() {
+  if (state.playing) return
+  state.playing = true
+  state.leftShelf = false
+  state.onPad = 0
+  state.caption = 0
+  state.monk = 0
+  state.cost = 0
+  state.rake = 0
+  state.walk = 0
+  const steps = [
+    [0, () => setStatus("idle — trees on the shelf")],
+    [700, () => { state.leftShelf = true; setStatus("leaves the shelf") }],
+    [1400, () => { state.onPad = 1; setStatus("on the pad") }],
+    [2000, () => { state.caption = 1; setStatus("Cloe — bonsai-garden skeleton") }],
+    [2600, () => { state.monk = 1; setStatus("the monk rakes") }],
+    [3200, () => { state.cost = 0.04; setStatus("cost 0.04") }],
+    [3900, () => { state.cost = 0.12; setStatus("cost 0.12") }],
+    [5200, () => { state.playing = false; setStatus("done — press play again") }],
+  ]
+  steps.forEach(([ms, fn]) => setTimeout(fn, ms))
+}
+
+function loop() {
+  if (state.monk > 0) {
+    state.rake += 0.03
+    state.walk += 0.006
+  }
+  frame()
+  requestAnimationFrame(loop)
+}
+
+document.getElementById("play").onclick = play
+loadAll().then(() => { setStatus("ready"); loop() }).catch(err => { setStatus("missing " + err.message) })
+</script>
+</body>
+</html>

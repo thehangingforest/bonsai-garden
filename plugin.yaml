@@ -1,0 +1,18 @@
+name: bonsai-garden
+label: Bonsai Garden
+version: 0.4.0
+description: >-
+  Local Hermes Desktop garden: live busy state, profile, system clock and
+  reported usage. One bonsai per agent, taken from that agent's own profile
+  roster; the focused busy agent's tree moves to a stand and returns to its
+  shelf slot. Each agent row opens its conversation or interrupts a busy
+  session through scoped SDK routes. The cat spawns at random and can be
+  dragged, without any action. Unreported cost stays unavailable.
+  Recurring agent routines are read on demand from each
+  profile's own gateway cron store; script-only, one-shot or finished jobs
+  never appear. No CLI-wide monitoring.
+author: thehangingforest
+license: MIT
+requires_hermes: ">=0.20.0"
+kind: standalone
+platforms: [linux]

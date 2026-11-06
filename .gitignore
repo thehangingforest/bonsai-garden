@@ -1,0 +1,9 @@
+# Build and test residue
+__pycache__/
+*.pyc
+*.tap
+*.log
+
+# OS noise
+.DS_Store
+Thumbs.db
