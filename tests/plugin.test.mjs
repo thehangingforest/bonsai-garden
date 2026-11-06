@@ -148,6 +148,25 @@ test('usage and calendar show only host values and the supplied system date', as
   assert.equal(mod.readouts({ total: 1234 }, now).tokens, '1,234');
 });
 
+test('every shipped HUD frame fits its widest unbreakable token, so no readout breaks mid-word', async () => {
+  const mod = await plugin();
+  assert.equal(typeof mod.hudReadoutFits, 'function', 'the HUD text-fitting guard is missing');
+  // The season strip is sized on its own (0.9cqw, no label), so only the four data frames use HUD_TEXT.
+  const frames = Object.entries(actualArt.hud).filter(([key]) => key !== 'season');
+  assert.equal(frames.length, 4, 'the shipped art must expose the four data frames');
+  for (const [key, rect] of frames) {
+    assert.equal(mod.hudReadoutFits(rect, actualArt.width), true, `the ${key} frame is too narrow for "${mod.HUD_TEXT.widest}"`);
+  }
+  const narrowest = Math.min(...frames.map(([, rect]) => rect.width));
+  const usable = (narrowest / actualArt.width) * 100 - 2 * mod.HUD_TEXT.paddingCqw;
+  assert.ok(mod.HUD_TEXT.widest.length * mod.HUD_TEXT.monospaceAdvanceEm * mod.HUD_TEXT.fontCqw <= usable);
+  // The shipped frame used to run 1.05cqw text inside 1.2% padding: those two numbers
+  // together overflowed this frame, which is the mid-word wrap this guards against.
+  const legacyNeed = mod.HUD_TEXT.widest.length * mod.HUD_TEXT.monospaceAdvanceEm * 1.05;
+  const legacyUsable = (narrowest / actualArt.width) * 100 - 2 * 1.2;
+  assert.ok(legacyNeed > legacyUsable, 'the legacy 1.05cqw sizing no longer overflows this frame — the guard has gone stale');
+});
+
 test('task title reads only verified session.info and refuses stale or wrong-owner results', async () => {
   const mod = await plugin();
   assert.equal(typeof mod.loadSessionTitle, 'function', 'read-only title lookup is missing');

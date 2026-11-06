@@ -94,6 +94,17 @@ export function readouts(usage, now = new Date(), locale, routines) {
   };
 }
 
+// HUD frames are sized in container units so they scale with the stage. A frame
+// is 9.18cqw wide with 1cqw of padding a side, so the widest honest readout has
+// to fit in what is left or the browser breaks it mid-word.
+export const HUD_TEXT = { fontCqw: 0.95, paddingCqw: 1, monospaceAdvanceEm: 0.6, widest: 'Unavailable' };
+
+export function hudReadoutFits(rect, stageWidth) {
+  const frameCqw = (rect.width / stageWidth) * 100;
+  const usable = frameCqw - 2 * HUD_TEXT.paddingCqw;
+  return HUD_TEXT.widest.length * HUD_TEXT.monospaceAdvanceEm * HUD_TEXT.fontCqw <= usable;
+}
+
 // session.info is a read-only projection; never fetch or infer from messages.
 export async function loadSessionTitle(scope) {
   const current = () => {
@@ -414,8 +425,8 @@ export function GardenPage({ ctx }) {
             'data-hud': key,
             style: {
               ...rectStyle(rect), display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
-              boxSizing: 'border-box', padding: key === 'season' ? '0 2%' : '1.2%', overflow: 'hidden', overflowWrap: 'anywhere',
-              textAlign: 'center', fontFamily: 'monospace', fontSize: key === 'season' ? '0.9cqw' : '1.05cqw', lineHeight: 1.35,
+              boxSizing: 'border-box', padding: key === 'season' ? '0 2%' : `${HUD_TEXT.paddingCqw}%`, overflow: 'hidden', overflowWrap: 'anywhere',
+              textAlign: 'center', fontFamily: 'monospace', fontSize: `${key === 'season' ? 0.9 : HUD_TEXT.fontCqw}cqw`, lineHeight: 1.35,
               // Cream is sampled from the approved artwork, not shell chrome.
               color: '#ffffcc'
             },
