@@ -6,8 +6,15 @@ Every number below is *derived* from the exported layers, then asserted against
 xcf3-delivery.json (the geometry measured in the XCF itself) so a silent drift
 fails the build instead of shipping a misaligned garden. Trees are reused
 pixel-for-pixel: only the background, the HUD/season anchors and Bunjingi's
-stand move in v3. The v3 room drops the black shelf (ETAGERE hidden in the XCF),
-repaints the monk and nudges the cat.
+stand move in v3. The v3 room also repaints the monk and nudges the cat.
+
+The black shelf is the one thing the v3 XCF loses by accident: `ETAGERE` is
+hidden *and* parked 19 px left / 35 px up of where Axel drew it, while the
+twelve measured homes and every tree sprite are unchanged. The line work is
+therefore re-anchored to its v1/v2 position here, with an explicit edit entry,
+and the build proves the restored planks land exactly on the v1/v2 pixels of
+the frozen v2 room — so the trees keep standing on a drawn shelf instead of
+floating on the fond.
 
 No scipy on this box: connected components use a hand-rolled BFS on numpy masks.
 """
@@ -24,7 +31,12 @@ from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = Path('/home/papa/Bureau/SESSIONS/2026-11-06/bonsai-v3')
 V1_ASSETS = Path('/home/papa/Bureau/SESSIONS/2026-11-06/assets-v1-frozen')
+V2_ASSETS = Path('/home/papa/Bureau/SESSIONS/2026-11-06/assets-v2-frozen')
 OUT = ROOT / 'assets'
+# Where v1/v2 drew the shelf `ETAGERE` layer; v3 hides it and parks it at
+# (-22, 7), 19 px left and 35 px up. The measured tree homes never moved, so
+# the shelf goes back here.
+SHELF_ANCHOR = (-3, 42)
 
 W, H = 1340, 650
 CELL_W, CELL_H = 68, 89
@@ -90,6 +102,29 @@ def main():
         if not item['visible'] or item['name'] in SPRITES:
             continue
         background.alpha_composite(load(item['name']), (item['x'], item['y']))
+
+    # --- the shelf: put back what the v3 XCF hid and moved -------------------
+    shelf_meta = by_name['ETAGERE']
+    assert not shelf_meta['visible'], 'ETAGERE is visible again in the XCF: drop this block'
+    ax, ay = SHELF_ANCHOR
+    cut_x, cut_y = max(0, -ax), max(0, -ay)
+    shelf = load('ETAGERE')
+    shelf = shelf.crop((cut_x, cut_y, shelf.width, shelf.height))
+    at = (ax + cut_x, ay + cut_y)
+    background.alpha_composite(shelf, at)
+    # ... and prove it: every fully opaque plank pixel must sit exactly where the
+    # frozen v2 room drew it, otherwise the trees are floating again.
+    planks = np.asarray(shelf)
+    ph, pw = min(planks.shape[0], H - at[1]), min(planks.shape[1], W - at[0])
+    solid = planks[:ph, :pw, 3] == 255
+    here = np.asarray(background)[at[1]:at[1] + ph, at[0]:at[0] + pw]
+    was = np.asarray(Image.open(V2_ASSETS / 'background.png').convert('RGBA'))[
+        at[1]:at[1] + ph, at[0]:at[0] + pw]
+    assert solid.any(), 'ETAGERE has no opaque pixels'
+    assert (here[solid][:, :3] == was[solid][:, :3]).all(), \
+        f'shelf re-anchored to {SHELF_ANCHOR} differs from the v1/v2 room'
+    print(f'Shelf: ETAGERE restored at {SHELF_ANCHOR} ({int(solid.sum())} plank pixels '
+          f'matched against {V2_ASSETS.name})')
 
     # --- HUD panels: Axel's own black rectangles, measured in the TOOLS layer
     tools = np.asarray(load('TOOLS')).astype(int)
@@ -191,7 +226,7 @@ def main():
                            'edits': ['Live HUD panels moved with Axel\'s TOOLS layer',
                                      'Season readout replaces the placeholder caption on plain fond',
                                      'Bunjingi sits on stand #4 when idle',
-                                     'v3 room: black shelf hidden, monk repainted, cat nudged',
+                                     'v3 room: shelf restored to its v1/v2 anchor (hidden and moved in the XCF), monk repainted, cat nudged',
                                      'Trees, stones and sand unchanged from v1 at the pixel']}
     assert len(scene['trees']) == 12
     assert len({tree['id'] for tree in scene['trees']}) == 12

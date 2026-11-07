@@ -1,12 +1,14 @@
 name: bonsai-garden
 label: Bonsai Garden
-version: 0.5.0
+version: 0.5.1
 description: >-
   Local Hermes Desktop garden: live busy state, profile, system clock and
   reported usage. One bonsai per agent, taken from that agent's own profile
   roster; the focused busy agent's tree moves to a stand and returns to its
   shelf slot. Each agent row opens its conversation or interrupts a busy
-  session through scoped SDK routes. The cat spawns at random and can be
+  session through scoped SDK routes. The drawn shelf is restored to its v1/v2
+  anchor so every tree stands on a plank instead of floating on the fond.
+  The cat spawns at random and can be
   dragged, without any action. Unreported cost stays unavailable.
   Recurring agent routines are read on demand from each
   profile's own gateway cron store; script-only, one-shot or finished jobs
