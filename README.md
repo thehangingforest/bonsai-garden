@@ -1,6 +1,6 @@
 # Bonsai Garden — local Hermes Desktop page
 
-Work by thehangingforest (Axel), prepared for the Hermes plugin hackathon (public deposit). The artwork is Axel's approved GIMP composition of **BONSAI GARDEN 3**, packed by `scripts/prepare_art3.py`; the twelve tree sprites are unchanged from v1, asserted at the pixel. Nothing is installed by the tests.
+Work by thehangingforest, prepared for the Hermes plugin hackathon (public deposit). The artwork is hangingforest's approved GIMP composition of **BONSAI GARDEN 3**, packed by `scripts/prepare_art3.py`; the twelve tree sprites are unchanged from v1, asserted at the pixel. Nothing is installed by the tests.
 
 ## Source and packaging
 
