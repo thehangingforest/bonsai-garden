@@ -429,6 +429,10 @@ test('registered page mounts real React, reacts to host busy/usage/profile, scal
       assert.equal(node.dataset.tool, key, `${key} must be a movable tool plaque`);
       assert.equal(node.dataset.draggable, 'true');
       assert.equal(node.style.background, 'rgb(0, 0, 0)', 'tool plaques are black rectangles over the painted ones');
+      // The plaque has to cover the painted rectangle: a frame sized from its own text
+      // would leave the painted rectangle showing around a shrunken black box.
+      assert.equal(node.style.width, `${art.hud[key].width / art.width * 100}%`, `${key} plaque must cover the painted rectangle it sits on`);
+      assert.equal(node.style.height, `${art.hud[key].height / art.height * 100}%`, `${key} plaque must cover the painted rectangle it sits on`);
       assert.equal(node.style.cursor, 'grab');
       assert.equal(node.style.pointerEvents, 'auto');
       assert.equal(node.style.zIndex, String(mod.toolZ(key, null)), 'the stacking order is fixed until one is picked up');

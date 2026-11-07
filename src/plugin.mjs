@@ -545,7 +545,9 @@ export function GardenPage({ ctx }) {
           sprite('monk', { ...ART.monk, x: monk.x, y: monk.y }),
           ...Object.entries(ART.hud ?? {}).map(([key, rect]) => {
             const movable = TOOL_KEYS.includes(key);
-            const position = movable ? tools[key] ?? rect : rect;
+            // The drag state carries only x/y: the frame keeps the painted rectangle's size
+            // so the black plaque covers that rectangle instead of shrinking onto its own text.
+            const position = movable ? { ...rect, ...tools[key] } : rect;
             return jsxs('div', {
               'data-hud': key, 'data-tool': movable ? key : undefined, 'data-draggable': String(movable),
               style: {
