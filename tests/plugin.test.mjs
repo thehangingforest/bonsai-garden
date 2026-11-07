@@ -21,7 +21,12 @@ export const art = {
     crons: { x: 430, y: 30, width: 190, height: 40 }, cost: { x: 650, y: 30, width: 180, height: 40 },
     season: { x: 860, y: 30, width: 170, height: 40 } }
 };
-const actualArt = JSON.parse(await readFile(new URL('../assets/scene.json', import.meta.url), 'utf8'));
+const actualArt = {
+  ...JSON.parse(await readFile(new URL('../assets/scene.json', import.meta.url), 'utf8')),
+  // what ships is the scene plus the monthly tips and the agent avatars
+  tips: JSON.parse(await readFile(new URL('../assets/care-tips.json', import.meta.url), 'utf8')),
+  avatars: JSON.parse(await readFile(new URL('../assets/avatars.json', import.meta.url), 'utf8'))
+};
 const reactURLs = new Map(['react', 'react/jsx-runtime'].map(name => [name, pathToFileURL(require.resolve(name)).href]));
 registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -139,13 +144,89 @@ test('usage and calendar show only host values and the supplied system date', as
   assert.equal(empty.time, now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }));
   assert.equal(empty.date, now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }));
   assert.equal(empty.crons, 'Unavailable');
-  assert.equal(empty.season, 'Focused session only');
+  assert.equal(empty.season, 'Automne · novembre', 'the season strip reads the local clock, in French');
+  assert.equal(mod.seasonOf(now).index, 11);
+  assert.equal(mod.readouts(null, new Date('2026-07-15T12:00:00Z'), 'en-GB').season, 'Été · juillet');
+  assert.equal(mod.readouts(null, new Date('2026-01-15T12:00:00Z'), 'en-GB').season, 'Hiver · janvier');
+  assert.equal(mod.readouts(null, new Date('2026-04-15T12:00:00Z'), 'en-GB').season, 'Printemps · avril');
   for (const cost of [undefined, null, NaN, Infinity, -1, '0.5']) {
     assert.equal(mod.readouts({ cost_usd: cost }, now).cost, 'Unavailable');
   }
   assert.equal(mod.readouts({ cost_usd: 0 }, now).cost, '$0.0000');
   assert.equal(mod.readouts({ cost_usd: 0.1234, total: 1234 }, now).cost, '$0.1234');
   assert.equal(mod.readouts({ total: 1234 }, now).tokens, '1,234');
+});
+
+test('agent roster comes from the gateway profile routes, deduplicated and deterministic', async () => {
+  const mod = await plugin();
+  assert.equal(typeof mod.loadAgentRoster, 'function', 'the roster must come from the gateway routes, not from routines');
+  const previous = sdk.host.profileRoutes;
+  try {
+    let calls = 0;
+    sdk.host.profileRoutes = async () => {
+      calls += 1;
+      return [
+        { connectionId: 'local', profile: 'vera' },
+        { connectionId: 'local', profile: 'cloe' },
+        { connectionId: 'cloud', profile: 'vera' },
+        { connectionId: 'local', profile: '  ' },
+        { connectionId: 'local' }
+      ];
+    };
+    const roster = await mod.loadAgentRoster();
+    assert.deepEqual(roster.agents.map(agent => agent.profile), ['cloe', 'vera'], 'one bonsai per profile, in a stable order');
+    assert.equal(roster.errors, 0);
+    assert.deepEqual(await mod.loadAgentRoster(), roster, 'the same routes always give the same roster');
+    assert.equal(calls, 2);
+    sdk.host.profileRoutes = async () => { throw new Error('gateway offline'); };
+    assert.equal(await mod.loadAgentRoster(), null, 'a failing gateway must not invent agents');
+    sdk.host.profileRoutes = async () => 'nonsense';
+    assert.equal(await mod.loadAgentRoster(), null, 'a non-array answer is not a roster');
+    sdk.host.profileRoutes = undefined;
+    assert.equal(await mod.loadAgentRoster(), null, 'no gateway routes, no roster');
+  } finally { sdk.host.profileRoutes = previous; }
+});
+
+test('tool plaques are movable objects with a fixed stacking order, and the art is never rewritten', async () => {
+  const mod = await plugin();
+  assert.deepEqual(mod.TOOL_KEYS, ['time', 'date', 'crons', 'cost'], 'the four data frames are the tool plaques');
+  const before = structuredClone(art);
+  const start = mod.initialTools(art);
+  assert.deepEqual(Object.keys(start).sort(), [...mod.TOOL_KEYS].sort());
+  assert.deepEqual(start.cost, { x: art.hud.cost.x, y: art.hud.cost.y });
+  assert.equal(start.season, undefined, 'the season strip is not a tool plaque');
+  assert.deepEqual(mod.placeTool(art, art.hud.time, 100, 100), { x: 100, y: 100 });
+  assert.deepEqual(mod.placeTool(art, art.hud.time, -40, 900), { x: 0, y: art.height - art.hud.time.height }, 'a plaque always stays inside the stage');
+  assert.equal(mod.toolZ('time', null), 1);
+  assert.equal(mod.toolZ('cost', null), 4);
+  assert.equal(mod.toolZ('cost', 'cost'), mod.TOOL_KEYS.length + 1, 'the dragged plaque comes forward');
+  assert.equal(mod.toolZ('season', null), 0, 'the season strip stays behind the tools');
+  assert.deepEqual(art, before, 'dragging must never rewrite the delivered art');
+});
+
+test('the monthly care tip and the agent avatars come from the delivered art', async () => {
+  const mod = await plugin();
+  assert.equal(typeof mod.careTip, 'function', 'the monthly tip is missing');
+  const tips = JSON.parse(await readFile(new URL('../assets/care-tips.json', import.meta.url), 'utf8'));
+  // JSON.parse hoists the canonical integer keys ('10'-'12') in front of '01'-'09', so compare sorted.
+  assert.deepEqual([...Object.keys(tips)].sort(), Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, '0')), 'all twelve months must be present');
+  for (const [key, tip] of Object.entries(tips)) {
+    assert.equal(tip, tip.trim(), `${key} must not be padded`);
+    assert.ok(tip.length >= 40 && tip.length <= 60, `${key} is ${tip.length} characters`);
+    assert.doesNotMatch(tip, /[";«»]|[\u{1F000}-\u{1FAFF}]/u, `${key} must stay plain single-sentence text`);
+    assert.equal(mod.careTip({ ...art, tips }, new Date(`2026-${key}-10T12:00:00Z`)), tip, `${key} tip must be read from the art`);
+  }
+  assert.equal(mod.careTip(art, new Date('2026-11-06T12:34:56Z')), null, 'no delivered tip, no invented tip');
+  const avatars = JSON.parse(await readFile(new URL('../assets/avatars.json', import.meta.url), 'utf8'));
+  assert.ok(Object.keys(avatars).length >= 8, 'every desk profile needs a drawn avatar');
+  for (const [profile, source] of Object.entries(avatars)) {
+    assert.match(source, /^data:image\/png;base64,[A-Za-z0-9+/=]+$/, `${profile} avatar must be an inline PNG`);
+    assert.equal(mod.avatarFor({ ...art, avatars }, profile), source);
+  }
+  assert.equal(mod.avatarFor(art, 'cloe'), null, 'no avatars in the art, no avatar shown');
+  assert.equal(mod.avatarFor({ ...art, avatars: { cloe: 'not-an-image' } }, 'cloe'), null, 'anything but an inline image falls back');
+  assert.equal(mod.monogram('cloe'), 'C');
+  assert.equal(mod.monogram(''), '?');
 });
 
 test('every shipped HUD frame fits its widest unbreakable token, so no readout breaks mid-word', async () => {
@@ -243,6 +324,30 @@ test('actual 1340x650 manifest keeps twelve sprite sources and lays out one bons
     const box = { left: parseFloat(cat.style.left), top: parseFloat(cat.style.top) };
     assert.ok(box.left >= 0 && box.left <= (actualArt.width - actualArt.cat.width) / actualArt.width * 100 + 1e-9);
     assert.ok(box.top >= 0 && box.top <= (actualArt.height - actualArt.cat.height) / actualArt.height * 100 + 1e-9);
+    // The four readout frames are movable tool plaques; the season strip stays painted in.
+    const plaques = [...dom.window.document.querySelectorAll('[data-tool]')];
+    assert.deepEqual(plaques.map(node => node.dataset.tool), mod.TOOL_KEYS, 'every readout frame is a movable tool plaque');
+    assert.equal(plaques.filter(node => node.dataset.draggable === 'true').length, mod.TOOL_KEYS.length);
+    assert.equal(dom.window.document.querySelector('[data-hud="season"]').dataset.draggable, 'false', 'the season strip is drawn into the artwork, not a tool');
+    // The roster names each agent with its shipped avatar, and the footer carries
+    // the local season in French plus the monthly care tip.
+    const roster = dom.window.document.querySelector('[data-roster]');
+    assert.ok(roster, 'the roster block must name the agents');
+    const lines = [...roster.querySelectorAll('[data-roster-agent]')];
+    assert.equal(lines.length, rendered.length, 'one roster line per drawn bonsai');
+    for (const line of lines) {
+      const profile = line.dataset.rosterAgent;
+      assert.equal(line.dataset.rosterState, 'idle');
+      const avatar = line.querySelector('[data-avatar]');
+      assert.ok(avatar, `${profile} must wear its shipped avatar`);
+      assert.equal(avatar.getAttribute('src'), actualArt.avatars[profile], 'avatars come from the delivered manifest');
+      assert.equal(avatar.getAttribute('width'), '16');
+    }
+    const footer = [...dom.window.document.querySelectorAll('p')].map(node => node.textContent).find(text => text.startsWith('Hermes Desktop'));
+    assert.ok(footer, 'the page keeps its footer line');
+    assert.ok(footer.includes(mod.seasonLine(new Date())), 'the footer states the local season, in French');
+    const month = String(new Date().getMonth() + 1).padStart(2, '0');
+    assert.ok(footer.includes(`Care: ${actualArt.tips[month]}`), 'the footer carries the tip of the current month');
     const solo = mod.layoutTrees(actualArt, { profile: 'cloe', agents: [{ connectionId: 'local', profile: 'cloe' }] });
     assert.equal(solo.length, 1);
     assert.equal(solo[0].assigned, true);
@@ -319,6 +424,19 @@ test('registered page mounts real React, reacts to host busy/usage/profile, scal
       assert.equal(node.style.top, `${rect.y / art.height * 100}%`);
       assert.equal(node.style.overflowWrap, 'anywhere');
     }
+    for (const key of mod.TOOL_KEYS) {
+      const node = document.querySelector(`[data-hud="${key}"]`);
+      assert.equal(node.dataset.tool, key, `${key} must be a movable tool plaque`);
+      assert.equal(node.dataset.draggable, 'true');
+      assert.equal(node.style.background, 'rgb(0, 0, 0)', 'tool plaques are black rectangles over the painted ones');
+      assert.equal(node.style.cursor, 'grab');
+      assert.equal(node.style.pointerEvents, 'auto');
+      assert.equal(node.style.zIndex, String(mod.toolZ(key, null)), 'the stacking order is fixed until one is picked up');
+    }
+    const seasonFrame = document.querySelector('[data-hud="season"]');
+    assert.equal(seasonFrame.dataset.draggable, 'false', 'the season strip stays drawn into the artwork');
+    assert.equal(seasonFrame.style.background, 'transparent');
+    assert.equal(seasonFrame.style.pointerEvents, 'none');
     const cat = document.querySelector('[data-cat-drag="true"]');
     assert.ok(cat, 'the cat must be draggable, even while idle');
     assert.equal(cat.style.pointerEvents, 'auto');
@@ -348,6 +466,25 @@ test('registered page mounts real React, reacts to host busy/usage/profile, scal
     assert.equal(cat.style.left, `${dragged.x / art.width * 100}%`, 'the cat settles once the drag ends');
     assert.equal(cat.style.top, `${dragged.y / art.height * 100}%`);
     assert.equal(document.querySelectorAll('[data-cat-drag="true"]').length, 1, 'dragging must not clone the cat');
+    const plaque = document.querySelector('[data-hud="date"]');
+    const plaqueHome = { left: plaque.style.left, top: plaque.style.top };
+    await act(async () => {
+      plaque.dispatchEvent(pointer('pointerdown', 300, 200));
+      plaque.dispatchEvent(pointer('pointermove', 340, 200));
+    });
+    const shifted = mod.placeTool(art, art.hud.date, art.hud.date.x + 80, art.hud.date.y);
+    assert.equal(plaque.style.left, `${shifted.x / art.width * 100}%`, 'a tool plaque follows the finger across the drawing');
+    assert.equal(plaque.style.top, `${shifted.y / art.height * 100}%`);
+    assert.equal(plaque.style.zIndex, String(mod.toolZ('date', 'date')), 'the plaque under the finger comes forward while dragged');
+    assert.equal(document.querySelector('[data-hud="time"]').style.left, `${art.hud.time.x / art.width * 100}%`, 'dragging one plaque leaves the others alone');
+    await act(async () => {
+      plaque.dispatchEvent(pointer('pointerup', 340, 200));
+      plaque.dispatchEvent(pointer('pointermove', 900, 700));
+    });
+    assert.equal(plaque.style.left, `${shifted.x / art.width * 100}%`, 'a plaque settles once the drag ends');
+    assert.equal(plaque.style.zIndex, String(mod.toolZ('date', null)), 'the plaque falls back into the fixed order');
+    assert.equal(document.querySelector('[data-hud="date"]'), plaque, 'dragging must not clone a plaque');
+    assert.notDeepEqual({ left: plaque.style.left, top: plaque.style.top }, plaqueHome);
     const clock = document.querySelector('[data-hud="time"]').textContent;
     await act(async () => {
       sdk.host.state.busy.set(true);
@@ -807,20 +944,40 @@ test('registered garden opens conversations and stops busy agents from their row
   }
 });
 
-test('built desktop plugin embeds exactly the delivered art', async () => {
-  const [built, source, art] = await Promise.all([
+test('built desktop plugin embeds exactly the delivered art, tips and avatars', async () => {
+  const [built, source, sceneRaw, tipsRaw, avatarsRaw] = await Promise.all([
     readFile(new URL('../desktop/plugin.js', import.meta.url), 'utf8'),
     readFile(pluginURL, 'utf8'),
-    readFile(new URL('../assets/scene.json', import.meta.url), 'utf8')
+    readFile(new URL('../assets/scene.json', import.meta.url), 'utf8'),
+    readFile(new URL('../assets/care-tips.json', import.meta.url), 'utf8'),
+    readFile(new URL('../assets/avatars.json', import.meta.url), 'utf8')
   ]);
-  const scene = JSON.parse(art);
-  // desktop/plugin.js is what ships: it must be this source with this art inlined.
-  assert.equal(built, source.replace('__BONSAI_ART__', JSON.stringify(scene)), 'desktop/plugin.js is stale — rebuild it with scripts/build_plugin.py');
-  const marker = 'const ART = ';
-  const start = built.indexOf(marker) + marker.length;
-  assert.ok(start > marker.length, 'built plugin lost its art injection point');
-  const embedded = JSON.parse(built.slice(start, built.indexOf(';\n', start)));
-  assert.deepEqual(embedded, scene);
+  const scene = JSON.parse(sceneRaw);
+  const delivered = { ...scene, tips: JSON.parse(tipsRaw), avatars: JSON.parse(avatarsRaw) };
+  // desktop/plugin.js is what ships: it must be this source with this art inlined. The check is
+  // textual for the code (a stale build is a stale build) and structural for the art, because
+  // JSON.parse hoists the integer-like tip keys ('10'-'12') in front of '01'-'09'.
+  const token = '__BONSAI_ART__';
+  const at = source.indexOf(token);
+  assert.ok(at > 0, 'source lost its art injection point');
+  const head = source.slice(0, at);
+  const tail = source.slice(at + token.length);
+  assert.ok(built.startsWith(head) && built.endsWith(tail), 'desktop/plugin.js is stale — rebuild it with scripts/build_plugin.py');
+  const embedded = JSON.parse(built.slice(head.length, built.length - tail.length));
+  assert.deepEqual(embedded, delivered);
   assert.equal(embedded.trees.length, 12);
   assert.equal(embedded.provenance.source, scene.provenance.source);
+  assert.deepEqual([...Object.keys(embedded.tips)].sort(), ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']);
+  for (const [month, tip] of Object.entries(embedded.tips)) {
+    assert.equal(typeof tip, 'string');
+    assert.ok(tip.length >= 40 && tip.length <= 60, `tip ${month} must stay inside the strip budget`);
+    assert.doesNotMatch(tip, /[;"«»]/, `tip ${month} must stay plain`);
+  }
+  assert.deepEqual(Object.keys(embedded.avatars).sort(), Object.keys(delivered.avatars).sort());
+  for (const [profile, source64] of Object.entries(embedded.avatars)) {
+    assert.match(source64, /^data:image\/png;base64,/, `${profile} must ship as an inline PNG`);
+  }
+  // The tips and avatars live only in the shipped bundle: the source stays art-free.
+  assert.doesNotMatch(source, /data:image\/png;base64/);
+  for (const tip of Object.values(embedded.tips)) assert.ok(!source.includes(tip), 'the monthly tips ship in the bundle only');
 });

@@ -10,7 +10,7 @@ const unavailable = sdk.atom(null);
 const ART = __BONSAI_ART__;
 
 // Stable profile-to-sprite projection: exactly one drawn bonsai per agent, never a filler.
-export function layoutTrees(art, { profile, busy, agents } = {}) {
+export function layoutTrees(art, { profile, busy, agents, busyAgents } = {}) {
   const sprites = art.trees ?? [];
   const roster = [];
   const seen = new Set();
@@ -33,10 +33,21 @@ export function layoutTrees(art, { profile, busy, agents } = {}) {
     taken.add(index);
     placed.set(entry.name, sprites[index]);
   }
+  // Busy agents step onto the drawn pedestals, in the same stable ranking order; a busy
+  // focused agent keeps the first pedestal so the caption never jumps around the artwork.
+  const working = new Set();
+  for (const [name, session] of Object.entries(busyAgents ?? {})) if (session) working.add(name);
+  const stands = art.stands ?? [];
+  const pedestals = new Map();
+  for (const entry of ranked) {
+    if (pedestals.size >= stands.length) break;
+    if (entry.name === profile && busy) pedestals.set(entry.name, stands[pedestals.size]);
+    else if (working.has(entry.name)) pedestals.set(entry.name, stands[pedestals.size]);
+  }
   return roster.filter(name => placed.has(name)).map(name => {
     const tree = placed.get(name);
     const assigned = Boolean(profile) && name === profile;
-    const stand = assigned && busy ? art.stands?.[0] : null;
+    const stand = pedestals.get(name) ?? null;
     return {
       ...tree, profile: name, assigned, location: stand ? 'stand' : 'shelf',
       x: stand ? stand.x + (stand.width - tree.width) / 2 : tree.x,
@@ -64,21 +75,26 @@ export function spawnCat(art, random = Math.random) {
   return placeCat(art, random() * (art.width - art.cat.width), random() * (art.height - art.cat.height));
 }
 
-// Analytical motion uses accumulated busy milliseconds, not frame increments.
+// Analytical motion uses accumulated busy milliseconds, not frame increments, so the
+// patrol is frame-independent. At rest the monk stands exactly on its drawn home; a busy
+// agent sends it on a constant-speed triangular walk that always comes back home.
+export const MONK_WALK = { speedPxPerSecond: 8, amplitude: 30 };
+
 export function advanceMonk(previous, focus, now, art) {
   const key = JSON.stringify([focus.profile, focus.sessionId]);
-  const elapsed = (previous?.elapsed ?? 0) + (previous?.busy && previous.key === key
-    ? Math.max(0, now - previous.at) : 0);
+  const busy = Boolean(focus.busy);
+  const elapsed = busy ? (previous?.elapsed ?? 0) + (previous?.busy && previous.key === key
+    ? Math.max(0, now - previous.at) : 0) : 0;
   const origin = art.monk;
-  const low = Math.max(0, origin.x - 30);
-  const high = Math.max(low, Math.min(art.width - origin.width, origin.x + 30));
-  const radius = (high - low) / 2;
-  const center = (high + low) / 2;
-  const phase = radius ? Math.asin(Math.max(-1, Math.min(1, (origin.x - center) / radius))) : 0;
+  const span = 4 * MONK_WALK.amplitude;
+  const walked = (elapsed / 1000) * MONK_WALK.speedPxPerSecond;
+  const phase = walked % span;
+  const offset = phase <= MONK_WALK.amplitude ? phase
+    : phase <= 3 * MONK_WALK.amplitude ? 2 * MONK_WALK.amplitude - phase : phase - span;
   return {
-    key, at: now, busy: focus.busy, elapsed,
-    x: radius ? center + radius * Math.sin(phase + elapsed * 0.0001) : low,
-    y: origin.y
+    key, at: now, busy, elapsed,
+    x: Math.max(0, Math.min(art.width - origin.width, origin.x + offset)),
+    y: Math.max(0, Math.min(art.height - origin.height, origin.y))
   };
 }
 
@@ -90,8 +106,62 @@ export function readouts(usage, now = new Date(), locale, routines) {
     date: now.toLocaleDateString(locale, { day: '2-digit', month: 'short', year: 'numeric' }),
     cost: typeof cost === 'number' && Number.isFinite(cost) && cost >= 0 ? `$${cost.toFixed(4)}` : 'Unavailable',
     tokens: typeof tokens === 'number' && Number.isFinite(tokens) && tokens >= 0 ? tokens.toLocaleString('en-GB') : 'Unavailable',
-    crons: routineSummary(routines ?? null), season: 'Focused session only'
+    crons: routineSummary(routines ?? null), season: seasonLine(now)
   };
+}
+
+export const MONTHS_FR = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+export const SEASONS_FR = { winter: 'Hiver', spring: 'Printemps', summer: 'Été', autumn: 'Automne' };
+
+// Season and month are read from the local clock, in French, with no locale guessing.
+export function seasonOf(now = new Date()) {
+  const month = now.getMonth();
+  const key = month === 11 || month <= 1 ? 'winter' : month <= 4 ? 'spring' : month <= 7 ? 'summer' : 'autumn';
+  return { key, label: SEASONS_FR[key], month: MONTHS_FR[month], index: month + 1 };
+}
+
+export function seasonLine(now = new Date()) {
+  const season = seasonOf(now);
+  return `${season.label} · ${season.month}`;
+}
+
+// One short care line per month, shipped with the artwork and never invented at render time.
+export function careTip(art, now = new Date()) {
+  const tip = art?.tips?.[String(seasonOf(now).index).padStart(2, '0')];
+  return typeof tip === 'string' && tip.trim() ? tip.trim() : null;
+}
+
+// Tool plaques: the four black readout rectangles. They are movable objects with a fixed
+// stacking order; the one under the finger only comes forward while it is being dragged.
+export const TOOL_KEYS = ['time', 'date', 'crons', 'cost'];
+
+export function toolZ(key, front) {
+  if (front === key) return TOOL_KEYS.length + 1;
+  const index = TOOL_KEYS.indexOf(key);
+  return index < 0 ? 0 : index + 1;
+}
+
+export function placeTool(art, rect, x, y) {
+  return {
+    x: Math.max(0, Math.min(art.width - rect.width, x)),
+    y: Math.max(0, Math.min(art.height - rect.height, y))
+  };
+}
+
+export function initialTools(art) {
+  const tools = {};
+  for (const key of TOOL_KEYS) if (art.hud?.[key]) tools[key] = { x: art.hud[key].x, y: art.hud[key].y };
+  return tools;
+}
+
+export function avatarFor(art, profile) {
+  const source = art?.avatars?.[profile];
+  return typeof source === 'string' && source.startsWith('data:image/') ? source : null;
+}
+
+export function monogram(profile) {
+  const text = typeof profile === 'string' ? profile.trim() : '';
+  return text ? text.slice(0, 1).toUpperCase() : '?';
 }
 
 // HUD frames are sized in container units so they scale with the stage. A frame
@@ -202,6 +272,25 @@ export async function loadRoutines(api = host) {
     entries.push({ connectionId: route.connectionId, profile: route.profile, label: labels[route.profile], jobs: Array.isArray(data.jobs) ? data.jobs : [] });
   });
   return { agents: routinesByAgent(entries), errors };
+}
+
+// The roster comes from the gateway's own profile routes, so every known agent gets a drawn
+// bonsai even when it has no recurring routine yet. Routines only decorate, they never roster.
+export async function loadAgentRoster(api = host) {
+  if (typeof api?.profileRoutes !== 'function') return null;
+  let routes;
+  try { routes = await api.profileRoutes(); } catch { return null; }
+  if (!Array.isArray(routes)) return null;
+  const seen = new Set();
+  const agents = [];
+  for (const route of routes) {
+    const name = typeof route?.profile === 'string' ? route.profile.trim() : '';
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    agents.push({ connectionId: typeof route?.connectionId === 'string' ? route.connectionId : null, profile: name });
+  }
+  agents.sort((left, right) => profileHash(left.profile) - profileHash(right.profile) || left.profile.localeCompare(right.profile));
+  return { agents, errors: 0 };
 }
 
 export function routineSummary(routines) {
@@ -354,6 +443,29 @@ export function GardenPage({ ctx }) {
     setCat(placeCat(ART, drag.x + (event.clientX - drag.clientX) * drag.scale, drag.y + (event.clientY - drag.clientY) * drag.scale));
   };
   const endCatDrag = () => { dragRef.current = null; };
+  const [tools, setTools] = useState(() => initialTools(ART));
+  const [frontTool, setFrontTool] = useState(null);
+  const toolDragRef = useRef(null);
+  const beginToolDrag = (key, event) => {
+    const rect = ART.hud?.[key];
+    if (!rect) return;
+    const box = stageRef.current?.getBoundingClientRect?.();
+    const scale = box && box.width > 0 ? ART.width / box.width : 1;
+    const start = tools[key] ?? { x: rect.x, y: rect.y };
+    toolDragRef.current = { key, pointerId: event.pointerId ?? 0, clientX: event.clientX, clientY: event.clientY, scale, x: start.x, y: start.y };
+    setFrontTool(key);
+    try { event.currentTarget.setPointerCapture?.(event.pointerId); } catch { /* no capture outside a real browser */ }
+  };
+  const moveTool = event => {
+    const drag = toolDragRef.current;
+    if (!drag || (event.pointerId ?? 0) !== drag.pointerId) return;
+    const rect = ART.hud?.[drag.key];
+    if (!rect) return;
+    const x = drag.x + (event.clientX - drag.clientX) * drag.scale;
+    const y = drag.y + (event.clientY - drag.clientY) * drag.scale;
+    setTools(current => ({ ...current, [drag.key]: placeTool(ART, rect, x, y) }));
+  };
+  const endToolDrag = () => { toolDragRef.current = null; setFrontTool(null); };
   const [monk, setMonk] = useState(() => ({ x: ART.monk.x, y: ART.monk.y }));
   useEffect(() => ctx.setInterval(() => setNow(Date.now()), 1000), [ctx]);
   useEffect(() => {
@@ -386,13 +498,23 @@ export function GardenPage({ ctx }) {
     staleTime: 15000, retry: false, refetchOnWindowFocus: false
   });
   const busyAgents = activityQuery.data?.busy ?? {};
-  const roster = routines?.agents?.length
-    ? routines.agents.map(agent => ({ connectionId: agent.connectionId ?? null, profile: agent.profile }))
-    : [{ connectionId: connectionId ?? null, profile }];
-  const trees = layoutTrees(ART, { profile, busy, agents: roster });
+  const rosterQuery = useQuery({
+    queryKey: ['bonsai-garden', 'roster', connectionId, epoch],
+    queryFn: () => loadAgentRoster(),
+    enabled: routinesReady,
+    staleTime: 60000, retry: false, refetchOnWindowFocus: false
+  });
+  // The roster comes from the gateway's own profile routes. The focused agent is always kept:
+  // a short or stale route list must never make the bonsai the user is watching disappear.
+  const routed = rosterQuery.data?.agents?.length ? rosterQuery.data.agents : [];
+  const roster = routed.some(agent => agent?.profile === profile)
+    ? routed
+    : [{ connectionId: connectionId ?? null, profile }, ...routed];
+  const trees = layoutTrees(ART, { profile, busy, agents: roster, busyAgents });
   const activeTree = trees.find(tree => tree.assigned);
   const hud = readouts(usage, new Date(now), undefined, routines);
   const routineNote = routinesReady ? `Routines: ${routineSummary(routines)}` : 'Crons unavailable';
+  const tip = careTip(ART, new Date(now));
   const taskTitle = (canReadTitle && titleQuery.data) || (busy ? 'Working · title unavailable' : 'No task title available');
   const captionWidth = 260;
   const caption = activeTree && busy && {
@@ -421,17 +543,24 @@ export function GardenPage({ ctx }) {
             onPointerUp: endCatDrag, onPointerCancel: endCatDrag
           }),
           sprite('monk', { ...ART.monk, x: monk.x, y: monk.y }),
-          ...Object.entries(ART.hud ?? {}).map(([key, rect]) => jsxs('div', {
-            'data-hud': key,
-            style: {
-              ...rectStyle(rect), display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
-              boxSizing: 'border-box', padding: key === 'season' ? '0 2%' : `${HUD_TEXT.paddingCqw}%`, overflow: 'hidden', overflowWrap: 'anywhere',
-              textAlign: 'center', fontFamily: 'monospace', fontSize: `${key === 'season' ? 0.9 : HUD_TEXT.fontCqw}cqw`, lineHeight: 1.35,
-              // Cream is sampled from the approved artwork, not shell chrome.
-              color: '#ffffcc'
-            },
-            children: [labels[key] && jsx('span', { style: { fontSize: '0.8em' }, children: labels[key] }), jsx('strong', { children: key === 'season' ? scopeLabel : hud[key] ?? 'Unavailable' })]
-          }, key)),
+          ...Object.entries(ART.hud ?? {}).map(([key, rect]) => {
+            const movable = TOOL_KEYS.includes(key);
+            const position = movable ? tools[key] ?? rect : rect;
+            return jsxs('div', {
+              'data-hud': key, 'data-tool': movable ? key : undefined, 'data-draggable': String(movable),
+              style: {
+                ...rectStyle(position), zIndex: toolZ(key, frontTool),
+                display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
+                boxSizing: 'border-box', padding: key === 'season' ? '0 2%' : `${HUD_TEXT.paddingCqw}%`, overflow: 'hidden', overflowWrap: 'anywhere',
+                textAlign: 'center', fontFamily: 'monospace', fontSize: `${key === 'season' ? 0.9 : HUD_TEXT.fontCqw}cqw`, lineHeight: 1.35,
+                // Cream on black is the approved artwork palette, not shell chrome.
+                color: '#ffffcc', background: movable ? '#000' : 'transparent',
+                cursor: movable ? 'grab' : 'default', pointerEvents: movable ? 'auto' : 'none', userSelect: 'none'
+              },
+              ...(movable ? { onPointerDown: event => beginToolDrag(key, event), onPointerMove: moveTool, onPointerUp: endToolDrag, onPointerCancel: endToolDrag } : {}),
+              children: [labels[key] && jsx('span', { style: { fontSize: '0.8em' }, children: labels[key] }), jsx('strong', { children: hud[key] ?? 'Unavailable' })]
+            }, key);
+          }),
           caption && jsx('div', {
             'data-task-title': true, title: taskTitle,
             style: { ...rectStyle(caption), display: 'flex', alignItems: 'center', padding: '0 6px', boxSizing: 'border-box', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: '1cqw', borderRadius: 3, color: 'var(--ui-text-primary)', background: 'var(--ui-bg-elevated)' },
@@ -439,6 +568,23 @@ export function GardenPage({ ctx }) {
           })
         ]
       }),
+      trees.length ? jsxs('div', {
+        'data-roster': true, 'aria-label': 'Agents · one drawn bonsai each',
+        style: { margin: '8px 0 0', fontSize: 12, color: 'var(--ui-text-secondary)', display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' },
+        children: [
+          jsx('strong', { style: { color: 'var(--ui-text-primary)' }, children: `Agents · ${trees.length}` }),
+          ...trees.map(tree => jsxs('span', {
+            'data-roster-agent': tree.profile, 'data-roster-state': busyAgents[tree.profile] ? 'working' : 'idle',
+            style: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '0 6px', borderRadius: 3, background: tree.assigned ? 'var(--ui-bg-elevated)' : 'transparent' },
+            children: [
+              avatarFor(ART, tree.profile)
+                ? jsx('img', { 'data-avatar': tree.profile, src: avatarFor(ART, tree.profile), alt: '', width: 16, height: 16, style: { borderRadius: 3, imageRendering: 'pixelated' } })
+                : jsx('span', { 'data-monogram': tree.profile, 'aria-hidden': 'true', style: { fontFamily: 'monospace', fontWeight: 700 }, children: monogram(tree.profile) }),
+              jsx('span', { children: tree.profile })
+            ]
+          }, tree.profile))
+        ]
+      }) : null,
       routines?.agents?.length ? jsxs('div', {
         'data-routines': true, 'aria-label': 'Agent routines · live gateway cron stores',
         style: { margin: '8px 0 0', fontSize: 12, color: 'var(--ui-text-secondary)', display: 'flex', flexDirection: 'column', gap: 4 },
@@ -451,6 +597,9 @@ export function GardenPage({ ctx }) {
               jsxs('span', {
                 style: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
                 children: [
+                  avatarFor(ART, agent.profile)
+                    ? jsx('img', { 'data-avatar': agent.profile, src: avatarFor(ART, agent.profile), alt: '', width: 16, height: 16, style: { borderRadius: 3, imageRendering: 'pixelated' } })
+                    : jsx('span', { 'data-monogram': agent.profile, 'aria-hidden': 'true', style: { fontFamily: 'monospace', fontWeight: 700 }, children: monogram(agent.profile) }),
                   jsx('span', { children: `${agent.label} · ${agent.activeCount} active${agent.suspendedCount ? ` · ${agent.suspendedCount} suspended` : ''}` }),
                   jsx('button', {
                     type: 'button', 'data-gesture': 'open', children: 'Conversation',
@@ -480,7 +629,7 @@ export function GardenPage({ ctx }) {
       }) : null,
       jsx('p', {
         style: { margin: '8px 0 0', fontSize: 12, color: 'var(--ui-text-secondary)' },
-        children: `Hermes Desktop · ${scopeLabel} · One bonsai per agent · CLI activity unavailable · Tokens: ${hud.tokens} · ${routineNote}`
+        children: `Hermes Desktop · ${scopeLabel} · ${seasonLine(new Date(now))} · One bonsai per agent · CLI activity unavailable · Tokens: ${hud.tokens} · ${routineNote}${tip ? ` · Care: ${tip}` : ''}`
       })
     ]
   });
