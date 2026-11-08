@@ -75,24 +75,27 @@ export function spawnCat(art, random = Math.random) {
   return placeCat(art, random() * (art.width - art.cat.width), random() * (art.height - art.cat.height));
 }
 
-// Analytical motion uses accumulated busy milliseconds, not frame increments, so the
-// patrol is frame-independent. At rest the monk stands exactly on its drawn home; a busy
-// agent sends it on a constant-speed triangular walk that always comes back home.
-export const MONK_WALK = { speedPxPerSecond: 8, amplitude: 30 };
+// Analytical motion uses accumulated monotonic milliseconds, not frame increments, so the
+// patrol is frame-independent and every viewer sees the same walk. The monk is never frozen:
+// it drifts at a slow idle pace all the time, quicker while its agent works, and the walk is
+// a triangle of +/-30 px around its drawn home, so it always comes back to it.
+export const MONK_WALK = { speedPxPerSecond: 8, idleSpeedPxPerSecond: 2, amplitude: 30 };
 
 export function advanceMonk(previous, focus, now, art) {
   const key = JSON.stringify([focus.profile, focus.sessionId]);
   const busy = Boolean(focus.busy);
-  const elapsed = busy ? (previous?.elapsed ?? 0) + (previous?.busy && previous.key === key
-    ? Math.max(0, now - previous.at) : 0) : 0;
+  const elapsed = previous && Number.isFinite(previous.at) && now > previous.at ? now - previous.at : 0;
   const origin = art.monk;
   const span = 4 * MONK_WALK.amplitude;
-  const walked = (elapsed / 1000) * MONK_WALK.speedPxPerSecond;
-  const phase = walked % span;
+  const perSecond = busy ? MONK_WALK.speedPxPerSecond : MONK_WALK.idleSpeedPxPerSecond;
+  // Distance walked, wrapped on the wave period: the phase is what places the monk, so the
+  // position stays continuous when the pace changes and never depends on the tick rate.
+  const walked = ((previous?.walked ?? 0) + (elapsed / 1000) * perSecond) % span;
+  const phase = walked;
   const offset = phase <= MONK_WALK.amplitude ? phase
     : phase <= 3 * MONK_WALK.amplitude ? 2 * MONK_WALK.amplitude - phase : phase - span;
   return {
-    key, at: now, busy, elapsed,
+    key, at: now, busy, walked,
     x: Math.max(0, Math.min(art.width - origin.width, origin.x + offset)),
     y: Math.max(0, Math.min(art.height - origin.height, origin.y))
   };
@@ -474,7 +477,9 @@ export function GardenPage({ ctx }) {
       setMonk(motionRef.current);
     };
     advance();
-    if (busy) return ctx.setInterval(advance, 100);
+    // The monk is never still: the idle drift ticks once a second, work steps it up to 10 Hz,
+    // and both paces are analytical, so the walk does not depend on the tick rate.
+    return ctx.setInterval(advance, busy ? 100 : 1000);
   }, [ctx, busy, profile, sessionId]);
   const canReadTitle = Boolean(focused && epoch !== null && sessionId && owner?.connectionId === connectionId && owner?.profile === profile && gatewayProfile === profile);
   const titleQuery = useQuery({
@@ -537,6 +542,19 @@ export function GardenPage({ ctx }) {
             'data-tree-id': tree.id, 'data-tree-assigned': String(tree.assigned), 'data-location': tree.location,
             alt: `${tree.profile} · ${tree.assigned && busy ? 'working' : 'idle'} bonsai`
           })),
+          // One invisible hit area per drawn bonsai, over its sprite and under the cat, the monk
+          // and the plaques: clicking a tree opens that agent's conversation, exactly like its
+          // roster button. A placard dragged on top of a tree covers it, as a object would.
+          ...trees.map(tree => jsx('button', {
+            type: 'button', 'data-tree-hit': tree.profile, 'data-tree-hit-state': tree.assigned && busy ? 'working' : 'idle',
+            'aria-label': `Open conversation with ${tree.profile}`,
+            title: `Open ${tree.profile}'s conversation`,
+            onClick: () => { openAgentConversation(tree.profile); },
+            style: {
+              ...rectStyle(tree), zIndex: 0, margin: 0, padding: 0, border: 'none', display: 'block',
+              background: 'transparent', cursor: 'pointer', pointerEvents: 'auto'
+            }
+          }, `tree-hit-${tree.profile}`)),
           sprite('cat', { ...ART.cat, x: cat.x, y: cat.y }, {
             'data-cat-drag': 'true', style: { pointerEvents: 'auto', cursor: 'grab' },
             onPointerDown: beginCatDrag, onPointerMove: moveCat,
@@ -554,10 +572,12 @@ export function GardenPage({ ctx }) {
                 ...rectStyle(position), zIndex: toolZ(key, frontTool),
                 display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
                 boxSizing: 'border-box', padding: key === 'season' ? '0 2%' : `${HUD_TEXT.paddingCqw}%`, overflow: 'hidden', overflowWrap: 'anywhere',
-                textAlign: 'center', fontFamily: 'monospace', fontSize: `${key === 'season' ? 0.9 : HUD_TEXT.fontCqw}cqw`, lineHeight: 1.35,
-                // Cream on black is the approved artwork palette, not shell chrome.
-                color: '#ffffcc', background: movable ? '#000' : 'transparent',
-                cursor: movable ? 'grab' : 'default', pointerEvents: movable ? 'auto' : 'none', userSelect: 'none'
+                textAlign: 'center', fontFamily: "'Agave', monospace", fontSize: `${key === 'season' ? 0.9 : HUD_TEXT.fontCqw}cqw`, lineHeight: 1.35,
+                // These plaques ARE the tools: opaque black pavers, white text and one piece of
+                // information each. They are movable objects, so the one under the finger is the
+                // one that comes forward — and it neither shrinks nor fades while it is dragged.
+                color: '#ffffff', background: movable ? '#000' : 'transparent',
+                cursor: movable ? (frontTool === key ? 'grabbing' : 'grab') : 'default', pointerEvents: movable ? 'auto' : 'none', userSelect: 'none'
               },
               ...(movable ? { onPointerDown: event => beginToolDrag(key, event), onPointerMove: moveTool, onPointerUp: endToolDrag, onPointerCancel: endToolDrag } : {}),
               children: [labels[key] && jsx('span', { style: { fontSize: '0.8em' }, children: labels[key] }), jsx('strong', { children: hud[key] ?? 'Unavailable' })]

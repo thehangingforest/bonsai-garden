@@ -1,20 +1,25 @@
 name: bonsai-garden
 label: Bonsai Garden
-version: 0.6.1
+version: 0.6.2
 description: >-
   Local Hermes Desktop garden: live busy state, profile, system clock and
   reported usage. One bonsai per agent, taken from that agent's own profile
   roster; the focused busy agent's tree moves to a stand and returns to its
   shelf slot. Each agent row opens its conversation or interrupts a busy
-  session through scoped SDK routes. The drawn shelf is restored to its v1/v2
-  anchor so every tree stands on a plank instead of floating on the fond.
-  The cat spawns at random and can be
-  dragged, without any action. Unreported cost stays unavailable.
-  The four black HUD plaques are movable objects with a fixed stacking order:
-  the one under the finger comes forward while it is dragged, and every plaque
-  stays clamped inside the drawn frame. Season and month are read from the
-  local clock in French (Automne · novembre), and one short care line per month
-  ships with the artwork, so a tip is never invented at render time.
+  session through scoped SDK routes — and so does the bonsai itself: clicking a
+  drawn tree opens that agent's conversation, exactly like its row. The drawn
+  shelf is restored to its v1/v2 anchor so every tree stands on a plank instead
+  of floating on the fond. The monk never stands still: it drifts along its
+  stretch of garden even at rest and walks faster while its agent is busy, from
+  elapsed time, so the pace never depends on the tick rate. The cat spawns at
+  random and can be dragged, without any action. Unreported cost stays
+  unavailable.
+  The four black HUD plaques ARE the tools: opaque black pavers with white text
+  and one piece of information each, draggable anywhere over the drawing like
+  the cat, with the plaque under the finger brought forward while it is dragged
+  and every plaque clamped inside the drawn frame. Season and month are read
+  from the local clock in French (Automne · novembre), and one short care line
+  per month ships with the artwork, so a tip is never invented at render time.
   Recurring agent routines are read on demand from each
   profile's own gateway cron store; script-only, one-shot or finished jobs
   never appear. No CLI-wide monitoring.

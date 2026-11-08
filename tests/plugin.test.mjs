@@ -107,7 +107,7 @@ test('profile tree keeps its identity, sprite and home through busy and idle tra
   assert.equal(mod.layoutTrees(art, { profile: 'cloe', busy: true, agents }).find(tree => tree.assigned).id, active.id);
 });
 
-test('monk moves slowly on elapsed busy time, horizontally within bounds, never on idle time', async () => {
+test('monk drifts continuously — slow at rest, quicker while busy, always within bounds', async () => {
   const mod = await plugin();
   assert.equal(typeof mod.advanceMonk, 'function', 'elapsed-time motion is missing');
   const focus = { busy: true, profile: 'cloe', sessionId: 'runtime-a' };
@@ -115,19 +115,29 @@ test('monk moves slowly on elapsed busy time, horizontally within bounds, never 
   const direct = mod.advanceMonk(start, focus, 11000, art);
   let stepped = start;
   for (let now = 1100; now <= 11000; now += 100) stepped = mod.advanceMonk(stepped, focus, now, art);
-  assert.equal(stepped.x, direct.x, 'motion must be independent of frame count');
+  assert.ok(Math.abs(stepped.x - direct.x) < 1e-6, 'motion must be independent of frame count');
   assert.ok(Math.abs(direct.x - start.x) > 0 && Math.abs(direct.x - start.x) <= 30);
   assert.equal(direct.y, art.monk.y);
+  // The monk is never still: idle time moves it too, just at a slower pace.
   const idle = mod.advanceMonk(direct, { ...focus, busy: false }, 12000, art);
-  const longIdle = mod.advanceMonk(idle, { ...focus, busy: false }, 1000000, art);
-  assert.equal(longIdle.x, idle.x);
-  const resumed = mod.advanceMonk(longIdle, focus, 1000100, art);
-  assert.equal(resumed.x, idle.x, 'idle interval must not count as busy movement');
+  assert.notEqual(idle.x, direct.x, 'the monk must keep walking while the agent is idle');
+  assert.ok(Math.abs(idle.x - direct.x) < Math.abs(direct.x - start.x), 'the idle drift stays slower than the working walk');
+  const longIdle = mod.advanceMonk(idle, { ...focus, busy: false }, 70000, art);
+  assert.notEqual(longIdle.x, idle.x, 'a long idle stretch keeps advancing the patrol');
+  // Switching pace must not teleport it: the phase carries over.
+  const resumed = mod.advanceMonk(longIdle, focus, 71000, art);
+  assert.ok(Math.abs(resumed.x - longIdle.x) <= 8, 'going back to work must not jump the monk');
   for (let time = 0; time < 20000000; time += 7919) {
     const position = mod.advanceMonk(start, focus, time, art);
     assert.ok(position.x >= art.monk.x - 30 && position.x <= art.monk.x + 30);
     assert.ok(position.x >= 0 && position.x + art.monk.width <= art.width);
     assert.equal(position.y, art.monk.y);
+    assert.ok(Number.isFinite(position.x));
+  }
+  for (let time = 0; time < 20000000; time += 7919) {
+    const position = mod.advanceMonk(start, { ...focus, busy: false }, time, art);
+    assert.ok(position.x >= art.monk.x - 30 && position.x <= art.monk.x + 30, 'idle walk stays on its stretch');
+    assert.ok(position.x >= 0 && position.x + art.monk.width <= art.width);
     assert.ok(Number.isFinite(position.x));
   }
   const edge = { ...art, monk: { ...art.monk, x: 0 } };
@@ -401,10 +411,14 @@ test('registered page mounts real React, reacts to host busy/usage/profile, scal
     assert.equal(stage.style.width, '100%');
     assert.equal(stage.style.maxWidth, `${art.width}px`);
     const background = document.querySelector('[data-sprite="background"]');
-    assert.equal(background.getAttribute('src'), art.background);
+    const backgroundSrc = background.getAttribute('src');
+    assert.ok(
+      backgroundSrc === art.background || backgroundSrc.startsWith('data:image/png;base64,'),
+      'the background must come from the delivered art: asset path in source, inlined data URL in the built bundle',
+    );
     assert.equal(background.style.imageRendering, 'pixelated');
     assert.equal(document.querySelector('section').style.background, 'var(--ui-bg-editor)');
-    assert.equal(document.querySelector('[data-hud="cost"]').style.color, 'rgb(255, 255, 204)');
+    assert.equal(document.querySelector('[data-hud="cost"]').style.color, 'rgb(255, 255, 255)');
     assert.match(document.body.textContent, /focused session only/i);
     assert.match(document.body.textContent, /one bonsai per agent/i);
     assert.doesNotMatch(document.body.textContent, /decorative/i, 'the shelf must not claim decorative filler bonsai');
@@ -514,8 +528,8 @@ test('registered page mounts real React, reacts to host busy/usage/profile, scal
     assert.equal(tree.dataset.location, 'shelf');
     assert.deepEqual({ left: tree.style.left, top: tree.style.top }, home);
     const idleLeft = monk.style.left;
-    await act(async () => { monotonic += 900000; for (const timer of [...ctx.timers.values()]) timer.fn(); });
-    assert.equal(monk.style.left, idleLeft);
+    await act(async () => { monotonic += 97000; for (const timer of [...ctx.timers.values()]) timer.fn(); });
+    assert.notEqual(monk.style.left, idleLeft, 'the monk keeps drifting at rest, just slower');
     assert.match(document.querySelector('[data-hud="cost"]').textContent, /Unavailable/);
     assert.ok(document.querySelector('[data-task-title]') === null, 'caption disappears when work finishes');
     await act(async () => { sdk.host.state.busy.set(true); sdk.host.state.focusedSessionOwner.set({ connectionId: 'other-source', profile: 'default' }); });
@@ -931,6 +945,17 @@ test('registered garden opens conversations and stops busy agents from their row
     await act(async () => { openLana.click(); await new Promise(done => setTimeout(done, 10)); });
     assert.ok(events.some(event => event.method === 'newChat'
       && event.args[0].profile === 'lana'), 'an agent without stored sessions starts a draft');
+    // A drawn bonsai is a button too: clicking the tree opens that agent's conversation.
+    const hits = [...document.querySelectorAll('[data-tree-hit]')];
+    assert.equal(hits.length, document.querySelectorAll('[data-tree-id]').length,
+      'every drawn bonsai carries exactly one hit area');
+    const cloeHit = document.querySelector('[data-tree-hit="cloe"]');
+    assert.ok(cloeHit, 'the drawn bonsai for cloe must be clickable');
+    assert.equal(cloeHit.style.pointerEvents, 'auto');
+    await act(async () => { cloeHit.click(); await new Promise(done => setTimeout(done, 10)); });
+    const treeOpened = events.filter(event => event.method === 'openSession').at(-1);
+    assert.equal(treeOpened.args[0], 'stored-c1', 'clicking a bonsai opens that agent conversation');
+    assert.equal(treeOpened.args[1].route.profile, 'cloe');
   } finally {
     await act(async () => root.unmount());
     queryClient.clear();
