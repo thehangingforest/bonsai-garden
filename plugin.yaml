@@ -1,6 +1,6 @@
 name: bonsai-garden
 label: Bonsai Garden
-version: 0.6.2
+version: 0.6.3
 description: >-
   Local Hermes Desktop garden: live busy state, profile, system clock and
   reported usage. One bonsai per agent, taken from that agent's own profile
@@ -17,9 +17,14 @@ description: >-
   The four black HUD plaques ARE the tools: opaque black pavers with white text
   and one piece of information each, draggable anywhere over the drawing like
   the cat, with the plaque under the finger brought forward while it is dragged
-  and every plaque clamped inside the drawn frame. Season and month are read
-  from the local clock in French (Automne · novembre), and one short care line
-  per month ships with the artwork, so a tip is never invented at render time.
+  and every plaque clamped inside the drawn frame. The fond is the artist's own
+  BONSAI GARDEN 31 export — the room alone, without the black panels that older
+  packs had baked into it. Every drawn bonsai is signed just under its pot with
+  a small black cartouche carrying the agent's name and shipped avatar, so the
+  garden says which agent is which without opening anything. Season and month
+  come from the local clock, in English (Autumn · November), and one short care
+  line per month ships with the artwork, so a tip is never invented at render
+  time. The interface is English throughout.
   Recurring agent routines are read on demand from each
   profile's own gateway cron store; script-only, one-shot or finished jobs
   never appear. No CLI-wide monitoring.

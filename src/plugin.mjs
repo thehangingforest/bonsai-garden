@@ -101,26 +101,33 @@ export function advanceMonk(previous, focus, now, art) {
   };
 }
 
+// One documented blended rate for the approximate line: the HUD only uses it when the gateway
+// reports tokens but no dollars, and always prefixes the result with a tilde so an estimate is
+// never mistaken for a measured price. Real reported costs are shown untouched, to the cent.
+export const APPROX_USD_PER_MTOKEN = 0.15;
+
 export function readouts(usage, now = new Date(), locale, routines) {
   const cost = usage?.cost_usd;
   const tokens = usage?.total;
+  const reported = typeof cost === 'number' && Number.isFinite(cost) && cost >= 0;
+  const counted = typeof tokens === 'number' && Number.isFinite(tokens) && tokens >= 0;
   return {
     time: now.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
     date: now.toLocaleDateString(locale, { day: '2-digit', month: 'short', year: 'numeric' }),
-    cost: typeof cost === 'number' && Number.isFinite(cost) && cost >= 0 ? `$${cost.toFixed(4)}` : 'Unavailable',
+    cost: reported ? `$${cost.toFixed(4)}` : counted ? `~$${(tokens / 1e6 * APPROX_USD_PER_MTOKEN).toFixed(4)}` : 'Unavailable',
     tokens: typeof tokens === 'number' && Number.isFinite(tokens) && tokens >= 0 ? tokens.toLocaleString('en-GB') : 'Unavailable',
     crons: routineSummary(routines ?? null), season: seasonLine(now)
   };
 }
 
-export const MONTHS_FR = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
-export const SEASONS_FR = { winter: 'Hiver', spring: 'Printemps', summer: 'Été', autumn: 'Automne' };
+export const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+export const SEASONS = { winter: 'Winter', spring: 'Spring', summer: 'Summer', autumn: 'Autumn' };
 
-// Season and month are read from the local clock, in French, with no locale guessing.
+// Season and month are read from the local clock, in English, with no locale guessing.
 export function seasonOf(now = new Date()) {
   const month = now.getMonth();
   const key = month === 11 || month <= 1 ? 'winter' : month <= 4 ? 'spring' : month <= 7 ? 'summer' : 'autumn';
-  return { key, label: SEASONS_FR[key], month: MONTHS_FR[month], index: month + 1 };
+  return { key, label: SEASONS[key], month: MONTHS[month], index: month + 1 };
 }
 
 export function seasonLine(now = new Date()) {
@@ -165,6 +172,19 @@ export function avatarFor(art, profile) {
 export function monogram(profile) {
   const text = typeof profile === 'string' ? profile.trim() : '';
   return text ? text.slice(0, 1).toUpperCase() : '?';
+}
+
+// How the garden signs an agent: the route's human label when the gateway ships one, otherwise the
+// capitalised profile. The raw slug is a key, not a name, and never reaches the visitor as one —
+// the plaque under the pot and the roster line below it go through here together, so they agree.
+export function agentLabel(profile, labels) {
+  const text = typeof profile === 'string' ? profile.trim() : '';
+  if (!text) return 'Agent';
+  const known = labels?.[text];
+  const label = typeof known === 'string' ? known.trim() : '';
+  // A label that merely repeats the slug is still a slug, not a name: only a real label wins.
+  if (label && label.toLowerCase() !== text.toLowerCase()) return label;
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 // HUD frames are sized in container units so they scale with the stage. A frame
@@ -528,6 +548,9 @@ export function GardenPage({ ctx }) {
     width: captionWidth, height: 28
   };
   const labels = { time: 'Local time', date: 'Local date', crons: 'Crons', cost: 'Session cost · USD', season: '' };
+  // The roster's human labels (a profile is 'eva', its label 'Eva'): the garden signs each
+  // bonsai with the name the desk uses, never with the raw profile slug alone.
+  const agentLabels = Object.fromEntries((routines?.agents ?? []).map(agent => [agent.profile, agent.label]));
   return jsxs('section', {
     'aria-label': 'Bonsai Garden',
     style: { height: '100%', overflow: 'auto', padding: 12, boxSizing: 'border-box', color: 'var(--ui-text-primary)', background: 'var(--ui-bg-editor)' },
@@ -555,6 +578,29 @@ export function GardenPage({ ctx }) {
               background: 'transparent', cursor: 'pointer', pointerEvents: 'auto'
             }
           }, `tree-hit-${tree.profile}`)),
+          // One name tag per drawn bonsai, just under its pot: the garden must say which agent is
+          // which without opening anything. Same black cartouche as the tool plaques, with the
+          // shipped avatar — and no pointer events, so it steals neither a click nor a drag.
+          ...trees.map(tree => {
+            const avatar = avatarFor(ART, tree.profile);
+            return jsxs('span', {
+              'data-tree-name': tree.profile, 'data-tree-name-state': tree.assigned && busy ? 'working' : 'idle',
+              'aria-hidden': 'true',
+              style: {
+                position: 'absolute', left: `${(tree.x + tree.width / 2) / ART.width * 100}%`,
+                top: `${Math.min(tree.y + tree.height, ART.height - 20) / ART.height * 100}%`,
+                transform: 'translate(-50%, 0)', zIndex: 0, display: 'inline-flex', alignItems: 'center', gap: '0.25em',
+                padding: '0.1em 0.35em', borderRadius: 3, fontFamily: "'Agave', monospace", fontSize: '0.95cqw',
+                lineHeight: 1.3, whiteSpace: 'nowrap', color: '#ffffff', background: '#000', pointerEvents: 'none', userSelect: 'none'
+              },
+              children: [
+                avatar
+                  ? jsx('img', { 'data-tree-name-avatar': tree.profile, src: avatar, alt: '', style: { width: '1.3em', height: '1.3em', borderRadius: 2, imageRendering: 'pixelated' } })
+                  : jsx('span', { style: { fontFamily: 'monospace', fontWeight: 700 }, children: monogram(tree.profile) }),
+                jsx('strong', { children: agentLabel(tree.profile, agentLabels) })
+              ]
+            }, `tree-name-${tree.profile}`);
+          }),
           sprite('cat', { ...ART.cat, x: cat.x, y: cat.y }, {
             'data-cat-drag': 'true', style: { pointerEvents: 'auto', cursor: 'grab' },
             onPointerDown: beginCatDrag, onPointerMove: moveCat,
@@ -586,7 +632,7 @@ export function GardenPage({ ctx }) {
           caption && jsx('div', {
             'data-task-title': true, title: taskTitle,
             style: { ...rectStyle(caption), display: 'flex', alignItems: 'center', padding: '0 6px', boxSizing: 'border-box', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontSize: '1cqw', borderRadius: 3, color: 'var(--ui-text-primary)', background: 'var(--ui-bg-elevated)' },
-            children: `${profile || 'Agent'} · ${taskTitle}`
+            children: `${agentLabel(profile, agentLabels)} · ${taskTitle}`
           })
         ]
       }),
@@ -602,7 +648,7 @@ export function GardenPage({ ctx }) {
               avatarFor(ART, tree.profile)
                 ? jsx('img', { 'data-avatar': tree.profile, src: avatarFor(ART, tree.profile), alt: '', width: 16, height: 16, style: { borderRadius: 3, imageRendering: 'pixelated' } })
                 : jsx('span', { 'data-monogram': tree.profile, 'aria-hidden': 'true', style: { fontFamily: 'monospace', fontWeight: 700 }, children: monogram(tree.profile) }),
-              jsx('span', { children: tree.profile })
+              jsx('span', { children: agentLabel(tree.profile, agentLabels) })
             ]
           }, tree.profile))
         ]
@@ -622,16 +668,16 @@ export function GardenPage({ ctx }) {
                   avatarFor(ART, agent.profile)
                     ? jsx('img', { 'data-avatar': agent.profile, src: avatarFor(ART, agent.profile), alt: '', width: 16, height: 16, style: { borderRadius: 3, imageRendering: 'pixelated' } })
                     : jsx('span', { 'data-monogram': agent.profile, 'aria-hidden': 'true', style: { fontFamily: 'monospace', fontWeight: 700 }, children: monogram(agent.profile) }),
-                  jsx('span', { children: `${agent.label} · ${agent.activeCount} active${agent.suspendedCount ? ` · ${agent.suspendedCount} suspended` : ''}` }),
+                  jsx('span', { children: `${agentLabel(agent.profile, agentLabels)} · ${agent.activeCount} active${agent.suspendedCount ? ` · ${agent.suspendedCount} suspended` : ''}` }),
                   jsx('button', {
                     type: 'button', 'data-gesture': 'open', children: 'Conversation',
-                    'aria-label': `Open conversation with ${agent.label}`, title: `Open ${agent.label}'s last conversation`,
+                    'aria-label': `Open conversation with ${agentLabel(agent.profile, agentLabels)}`, title: `Open ${agentLabel(agent.profile, agentLabels)}'s last conversation`,
                     onClick: () => { openAgentConversation(agent.profile); },
                     style: { font: 'inherit', padding: '0 6px', borderRadius: 3, cursor: 'pointer' }
                   }),
                   busyAgents[agent.profile] ? jsx('button', {
                     type: 'button', 'data-gesture': 'interrupt', children: 'Stop',
-                    'aria-label': `Stop ${agent.label}`, title: `Interrupt ${agent.label}'s busy session`,
+                    'aria-label': `Stop ${agentLabel(agent.profile, agentLabels)}`, title: `Interrupt ${agentLabel(agent.profile, agentLabels)}'s busy session`,
                     onClick: () => { interruptAgent(agent.profile).then(result => { if (result.ok) activityQuery.refetch(); }); },
                     style: { font: 'inherit', padding: '0 6px', borderRadius: 3, cursor: 'pointer' }
                   }) : null

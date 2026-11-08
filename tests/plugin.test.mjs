@@ -154,17 +154,35 @@ test('usage and calendar show only host values and the supplied system date', as
   assert.equal(empty.time, now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }));
   assert.equal(empty.date, now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }));
   assert.equal(empty.crons, 'Unavailable');
-  assert.equal(empty.season, 'Automne · novembre', 'the season strip reads the local clock, in French');
+  assert.equal(empty.season, 'Autumn · November', 'the season strip reads the local clock, in English');
   assert.equal(mod.seasonOf(now).index, 11);
-  assert.equal(mod.readouts(null, new Date('2026-07-15T12:00:00Z'), 'en-GB').season, 'Été · juillet');
-  assert.equal(mod.readouts(null, new Date('2026-01-15T12:00:00Z'), 'en-GB').season, 'Hiver · janvier');
-  assert.equal(mod.readouts(null, new Date('2026-04-15T12:00:00Z'), 'en-GB').season, 'Printemps · avril');
+  assert.equal(mod.readouts(null, new Date('2026-07-15T12:00:00Z'), 'en-GB').season, 'Summer · July');
+  assert.equal(mod.readouts(null, new Date('2026-01-15T12:00:00Z'), 'en-GB').season, 'Winter · January');
+  assert.equal(mod.readouts(null, new Date('2026-04-15T12:00:00Z'), 'en-GB').season, 'Spring · April');
   for (const cost of [undefined, null, NaN, Infinity, -1, '0.5']) {
     assert.equal(mod.readouts({ cost_usd: cost }, now).cost, 'Unavailable');
   }
   assert.equal(mod.readouts({ cost_usd: 0 }, now).cost, '$0.0000');
   assert.equal(mod.readouts({ cost_usd: 0.1234, total: 1234 }, now).cost, '$0.1234');
   assert.equal(mod.readouts({ total: 1234 }, now).tokens, '1,234');
+  // Tokens without dollars: the plaque shows an approximate line at the documented blended rate,
+  // marked with a tilde, and any real reported cost always wins over that estimate.
+  assert.equal(mod.readouts({ total: 2_000_000 }, now).cost, '~$0.3000');
+  assert.equal(mod.readouts({ total: 1234 }, now).cost, '~$0.0002');
+  assert.equal(mod.readouts({ cost_usd: 0.5, total: 2_000_000 }, now).cost, '$0.5000');
+  assert.equal(mod.readouts({ total: 'lots' }, now).cost, 'Unavailable', 'a non-number token count is not a price');
+});
+
+test('an agent is signed with its human label, never with the raw profile slug', async () => {
+  const mod = await plugin();
+  assert.equal(typeof mod.agentLabel, 'function', 'the garden must sign each bonsai by name');
+  assert.equal(mod.agentLabel('cloe', { cloe: 'Cloe (code)' }), 'Cloe (code)', 'a label the route ships wins');
+  assert.equal(mod.agentLabel('vera', {}), 'Vera', 'without a label the profile is capitalised, not shown as a slug');
+  assert.equal(mod.agentLabel('ana', { ana: 'ana' }), 'Ana', 'a label that merely repeats the slug is still a slug');
+  assert.equal(mod.agentLabel('cloe', { cloe: 'CLOE' }), 'Cloe', 'a slug shouted in capitals is still a slug');
+  assert.equal(mod.agentLabel('  mana  ', null), 'Mana', 'padding must not leak into the plaque');
+  assert.equal(mod.agentLabel('', {}), 'Agent');
+  assert.equal(mod.agentLabel(undefined), 'Agent');
 });
 
 test('agent roster comes from the gateway profile routes, deduplicated and deterministic', async () => {
@@ -340,7 +358,7 @@ test('actual 1340x650 manifest keeps twelve sprite sources and lays out one bons
     assert.equal(plaques.filter(node => node.dataset.draggable === 'true').length, mod.TOOL_KEYS.length);
     assert.equal(dom.window.document.querySelector('[data-hud="season"]').dataset.draggable, 'false', 'the season strip is drawn into the artwork, not a tool');
     // The roster names each agent with its shipped avatar, and the footer carries
-    // the local season in French plus the monthly care tip.
+    // which agents the shelf holds, the local season in English, and the monthly care tip.
     const roster = dom.window.document.querySelector('[data-roster]');
     assert.ok(roster, 'the roster block must name the agents');
     const lines = [...roster.querySelectorAll('[data-roster-agent]')];
@@ -353,9 +371,22 @@ test('actual 1340x650 manifest keeps twelve sprite sources and lays out one bons
       assert.equal(avatar.getAttribute('src'), actualArt.avatars[profile], 'avatars come from the delivered manifest');
       assert.equal(avatar.getAttribute('width'), '16');
     }
+    // Every drawn bonsai signs itself just under its pot, with the roster's human label, so the
+    // garden says which agent is which without opening anything.
+    const tags = [...dom.window.document.querySelectorAll('[data-tree-name]')];
+    assert.equal(tags.length, rendered.length, 'one name tag per drawn bonsai');
+    for (const tag of tags) {
+      const profile = tag.dataset.treeName;
+      const line = lines.find(node => node.dataset.rosterAgent === profile);
+      assert.ok(line, `${profile} must also appear in the roster`);
+      assert.ok(line.textContent.includes(tag.textContent.trim()), `${profile} must be signed with the same agent name as the roster`);
+      assert.equal(tag.style.background, 'rgb(0, 0, 0)', 'name tags wear the same black cartouche as the tool plaques');
+      assert.equal(tag.style.pointerEvents, 'none', 'a name tag must never steal a click or a drag');
+      assert.equal(tag.dataset.treeNameState, 'idle');
+    }
     const footer = [...dom.window.document.querySelectorAll('p')].map(node => node.textContent).find(text => text.startsWith('Hermes Desktop'));
     assert.ok(footer, 'the page keeps its footer line');
-    assert.ok(footer.includes(mod.seasonLine(new Date())), 'the footer states the local season, in French');
+    assert.ok(footer.includes(mod.seasonLine(new Date())), 'the footer states the local season, in English');
     const month = String(new Date().getMonth() + 1).padStart(2, '0');
     assert.ok(footer.includes(`Care: ${actualArt.tips[month]}`), 'the footer carries the tip of the current month');
     const solo = mod.layoutTrees(actualArt, { profile: 'cloe', agents: [{ connectionId: 'local', profile: 'cloe' }] });
@@ -516,7 +547,7 @@ test('registered page mounts real React, reacts to host busy/usage/profile, scal
     assert.equal(moved.dataset.location, 'stand');
     assert.match(document.querySelector('[data-hud="cost"]').textContent, /\$0\.1234/);
     assert.match(document.querySelector('[data-task-title]').textContent, /Verified session title/);
-    assert.match(document.querySelector('[data-task-title]').textContent, /default/, 'busy bonsai caption must identify the agent as well as its task');
+    assert.match(document.querySelector('[data-task-title]').textContent, /Default/, 'busy bonsai caption must identify the agent as well as its task');
     assert.equal(document.querySelector('[data-task-title]').style.whiteSpace, 'nowrap');
     const monk = document.querySelector('[data-sprite="monk"]');
     const start = { left: monk.style.left, top: monk.style.top };
@@ -707,7 +738,8 @@ test('registered garden renders per-agent routines from live scoped cron lists',
     const list = document.querySelector('[data-routines]');
     assert.ok(list, 'routine list is missing');
     const cloe = document.querySelector('[data-agent="cloe"]');
-    assert.match(cloe.textContent, /[Cc]loe/);
+    assert.match(cloe.textContent, /Cloe · 1 active/, 'the routine row must sign the agent by its readable name, never the raw slug');
+    assert.match(document.querySelector('[data-agent="lana"]').textContent, /Lana · 1 active/);
     assert.match(cloe.textContent, /1 active/);
     assert.match(cloe.textContent, /1 suspended/);
     const active = document.querySelector('[data-routine="j1"]');
