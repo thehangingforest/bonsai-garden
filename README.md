@@ -1,65 +1,140 @@
 # Bonsai Garden — local Hermes Desktop page
 
-Work by thehangingforest, prepared for the Hermes plugin hackathon (public deposit). The artwork is hangingforest's approved GIMP composition of **BONSAI GARDEN 3**, packed by `scripts/prepare_art3.py`; the twelve tree sprites are unchanged from v1, asserted at the pixel. Nothing is installed by the tests.
+Work by thehangingforest for the Hermes plugin hackathon. Artwork: the artist's approved GIMP
+composition of **BONSAI GARDEN 3**; the twelve tree sprites are unchanged from v1, asserted at the
+pixel. The tests install nothing.
 
-## Source and packaging
+## Files
 
-- `src/plugin.mjs`: native single-file ESM SDK page. Default plugin id `bonsai-garden`.
-- Route `/bonsai-garden`, sidebar **Garden**, palette **Open Bonsai Garden**.
-- `assets/scene.json`: parent-supplied 1340×650 art manifest, embedded PNG data URIs, twelve tree ids, monk, cat, four stands, HUD rectangles and the season readout, plus the provenance of the XCF it was measured from.
-- `scripts/prepare_art3.py`: packs the exported v3 XCF into `assets/` — background, trees, stands, HUD anchors, season strip — deriving every number from the exported layers and asserting it against `xcf3-delivery.json` (the geometry measured inside the XCF), so a silent drift fails the build instead of shipping a misaligned garden. Tree sprites are asserted pixel-for-pixel against the frozen v1 assets, so a redrawn tree fails the pack rather than shipping quietly. The v3 XCF also hides *and* moves the drawn shelf (`ETAGERE` parked 19 px left / 35 px up), so the pack re-anchors that layer to its v1/v2 position — with the edit listed in the scene provenance — and asserts every opaque plank pixel against the frozen v2 room, so the trees never stand on thin air.
-- `assets/care-tips.json`: twelve short English care lines, keyed `01`..`12` (one per month, 40–60 characters, plain text). `assets/avatars.json`: nine inline pixel portraits, one per agent profile. Both are shipped with the artwork and never invented at render time; `scripts/build_plugin.py` asserts the twelve keys, the 40–60 character budget and the plain-text rule before it embeds anything, so a bad line fails the build instead of shipping.
-- Parent packaging replaces the single art placeholder in `src/plugin.mjs` with the JSON object (art + tips + avatars) and writes `desktop/plugin.js`. The source template itself is not an installed plugin.
-- Deploying on this machine is a separate, explicit step: copy `desktop/plugin.js` (and `plugin.yaml`) into `~/.hermes/desktop-plugins/bonsai-garden/`, compare the `sha256sum` of both copies, then let the running Desktop app hot-reload the file (fallback: palette action *Reload desktop plugins*). Building alone changes nothing on screen — the background lives base64 inside `scene.json` and `plugin.js`.
-- `hermes plugins validate .` must pass (`Validation passed.` — manifest, loadable entry, security scan, desktop surface); the v3.1 log is `SESSIONS/2026-11-07/validate-0.5.1.log`.
-- Imports are restricted to `@hermes/plugin-sdk`, `react`, and `react/jsx-runtime`. No Python backend, additional npm dependencies, core patches, or configuration changes.
+- `src/plugin.mjs` — single-file ESM SDK page. Plugin id `bonsai-garden`, route `/bonsai-garden`,
+  sidebar **Garden**, palette **Open Bonsai Garden**.
+- `assets/scene.json` — 1340×650 manifest: embedded PNG data URIs, twelve tree ids, monk, cat, four
+  stands, the four HUD anchors (time, date, crons, cost) plus the painted season strip, XCF
+  provenance.
+- `assets/care-tips.json` — twelve English care lines, keyed `01`..`12` (one per month, 40–60 chars).
+  `assets/avatars.json` — nine inline pixel portraits, one per profile. Both ship with the art.
+- `scripts/prepare_art3.py` — packs the exported XCF, deriving every number from its layers and
+  asserting it against the geometry measured inside the XCF; tree sprites are asserted
+  pixel-for-pixel against the frozen v1 assets. The export hides *and* moves the drawn shelf, so the
+  pack re-anchors that layer to its v1/v2 position and asserts every opaque plank pixel against the
+  frozen v2 room.
+- `scripts/build_plugin.py` — replaces the art placeholder in `src/plugin.mjs` with the JSON object
+  (art + tips + avatars) and writes `desktop/plugin.js`.
+- `hermes plugins validate .` must pass (`Validation passed.`). Imports are limited to
+  `@hermes/plugin-sdk`, `react` and `react/jsx-runtime`: no Python backend, no extra npm
+  dependencies, no core patches.
+
+## Deploy (a separate, explicit step)
+
+Copy `desktop/plugin.js` and `plugin.yaml` into `~/.hermes/desktop-plugins/bonsai-garden/`, compare
+the `sha256sum` of both copies, then let the running Desktop hot-reload (fallback: palette action
+*Reload desktop plugins*). Building alone changes nothing on screen — the background lives base64
+inside `scene.json` and `plugin.js`.
 
 ## What is real
 
-The page subscribes through SDK `useValue` to `host.state.busy`, `focusedSessionProfile`, `focusedSessionId`, and `focusedUsage`. The gateway socket is not treated as work. System time/date use `Date.now()` and the local timezone. Cost uses only finite nonnegative `focusedUsage.cost_usd`; absent, null or invalid data is **Unavailable**, never a fabricated zero. A reported real zero is displayed as such. When the gateway reports tokens but no dollars — local models, older gateways — the plaque shows an *approximate* line computed from that token count at one documented blended rate (`APPROX_USD_PER_MTOKEN = 0.15`, i.e. USD per million tokens) and marks it with a tilde (`~$0.3000`), so an estimate is never read as a measured price; a real reported cost always wins over the estimate. Tokens use the host's reported total.
+Subscriptions go through SDK `useValue` on `host.state.busy`, `focusedSessionProfile`,
+`focusedSessionId` and `focusedUsage`; the gateway socket is not work; clock and date use `Date.now()`
+and the local timezone. Cost uses only a finite nonnegative `focusedUsage.cost_usd`: absent, null or
+invalid means **Unavailable**, never a fabricated zero, and a reported zero shows as zero. Tokens
+without dollars (local models, older gateways) give an *approximate* line at one documented blended
+rate, `APPROX_USD_PER_MTOKEN = 0.15`, marked with a tilde (`~$0.3000`); a reported cost always wins.
 
-Agent routines are read on demand from each profile's own gateway cron store through `host.profileRoutes()` and `host.requestProfile(route, 'cron.manage', { action: 'list', include_disabled: true, profile })` — the same scoped contract the desktop bot plugins use. Only recurring agent work qualifies: script-only watchers (`no_agent`), one-shots (`once …`) and completed jobs never appear. Suspended routines stay visible as suspended; every routine shows its real schedule and, when one exists, its real next run. Failed routes and mismatched `scoped` replies are counted as **incomplete**, never attributed to a profile; before a reply the summary stays **Unavailable**. Without profile routing, no routine claims are made.
+Routines are read on demand from each profile's own gateway cron store (`host.profileRoutes()` plus
+`host.requestProfile(route, 'cron.manage', …)`), the same scoped contract the desktop bot plugins
+use. Only recurring agent work qualifies: script-only watchers, one-shots and finished jobs never
+appear; suspended routines stay visible as suspended, with their real schedule and next run. Failed
+routes and mismatched `scoped` replies count as **incomplete**, never charged to a profile; without
+profile routing the garden claims nothing and keeps **Crons unavailable**.
 
-One bonsai per agent. The roster is the same set of scoped profile routes used for routines, plus the focused agent itself when the gateway's route list does not carry it yet — a short or stale route list must never make the bonsai the user is watching disappear. Each agent is projected onto a distinct sheet sprite by a stable hash with linear probing, so no two agents share a sprite and no decorative filler tree is drawn. Every sprite keeps its manifest id, image, dimensions and keyed React node, and sits in its own measured slot of the layout grid. Only the focused busy agent's tree moves — to `stands[0]`, centred and resting on it — and returns to its exact manifest home coordinates; the other trees stay put.
+One bonsai per agent, from those routes plus the focused agent itself when the route list does not
+carry it yet. A stable hash with linear probing gives each agent a distinct sheet sprite — no shared
+sprite, no filler tree. Homes are the measured grid: four columns by three planks (dividers at x = 58,
+120, 189, 259, 324; plank lines at y = 367, 456, 545), twelve compartments for nine agents; the
+cascade bunjingi sits on the fourth stand (x = 752, y = 575). Only the focused busy agent's tree
+moves, to `stands[0]`, and returns to its exact home. The monk is never frozen: it drifts ±30 px
+around its home on a triangle wave from accumulated monotonic time, 2 px/s at rest and 8 px/s while
+busy, so the pace never depends on the tick rate. The cat spawns at random, can be dragged, and
+carries no action.
 
-The slot grid was measured on the shipped artwork, not assumed: on the v1/v2 art the drawn shelf has four columns by three planks (vertical dividers at x = 58, 120, 189, 259, 324; plank lines at y = 367, 456, 545), i.e. twelve compartments for nine agents, so three compartments stay empty. Those measured homes are kept unchanged in v3, so the tree layout is the same grid. The exported **BONSAI GARDEN 3** document drops that shelf twice over: the `ETAGERE` layer is masked *and* parked at (-22, 7) — 19 px left and 35 px up of where v1/v2 drew it — while the homes and every tree sprite never moved. `prepare_art3.py` therefore puts the line work back on the v1/v2 anchor (the edit is listed in the scene provenance) and asserts every opaque plank pixel of that layer against the frozen v2 room (the shelf band y 300–320 × x 30–300 comes out pixel-identical to v2 — the 5 158 dominant fond pixels plus the drawn line work — where the v3-as-exported art showed one flat (102, 0, 0) fill across all 5 400 px), so a re-export either lands on the drawn shelf or fails the build. Measured on the shipped background: the eleven grid trees sit on a plank (58–60 % near-black along their base line) exactly as in v2, where the v3-as-exported art showed 0 % — they were floating on the fond. The cascade bunjingi sits outside the grid: its manifest home is the fourth stand (x = 752, y = 575), the drawn stand it belongs to, and it returns there like any other tree. Of the eleven sprites on the grid, ten land exactly on a plank line; yose-ue's measured cell ends one pixel lower (546 against 545) — as exported, not nudged. No two home rectangles intersect.
-
-The monk travels horizontally at at most three source pixels per second within ±30 source pixels, advancing from elapsed monotonic busy time; idle time does not advance it. The cat spawns at a random position at the start of each session and can be dragged; it carries no action. In v3 the monk is repainted and the cat's home is nudged, at the pixel level measured from the XCF.
-
-Task text is the actual `session.info.title`, not a summary inferred from messages. `session.info` is read-only, verified against the local SDK and canonical gateway source. The request is made only when focused-session ownership matches the active connection/profile, fenced before/after by the gateway activation epoch. Cross-owner tiles, missing titles and offline gateways use a clear fallback. No conversation transcript is requested. Metadata is refreshed on focus or busy transitions via the host's React Query integration, not by a fake timer.
-
-Older SDKs without focused atoms show a primary-session fallback; usage/title stay unavailable where unsupported. SDKs without profile routing show no routine section and keep **Crons unavailable** in the footer. Missing epoch support disables title RPC rather than risking a cross-connection result. The checked local Desktop dist contains focused atoms and epoch exports, but native rendering is left to the parent to verify.
+Task text is the actual `session.info.title` (read-only), requested only when focused-session
+ownership matches the active connection/profile and fenced by the gateway activation epoch;
+cross-owner tiles, missing titles and offline gateways fall back clearly. No transcript is requested,
+and metadata refreshes on focus or busy transitions through the host's React Query integration, not a
+fake timer. Older SDKs without focused atoms get a primary-session fallback, with usage and title
+unavailable where unsupported; native rendering of those paths is left to the parent to verify.
 
 ## Gestures
 
-Each drawn bonsai carries a **click-to-open** hit area (`data-tree-hit`, one per profile) centred on its own canopy: a click resolves the agent to a profile route exactly like the roster gesture below and opens the conversation (`openAgentConversation`), so the garden itself is a door and not just a picture. Under each pot sits a black **name cartouche** (`data-tree-name`, same agave-white cartouche as the tool plaques, avatar included, `pointer-events: none` so it never steals a click or a drag) carrying the agent's name: `agentLabel` prefers the label the route ships and otherwise capitalises the profile, so the plaque and the roster line below it always sign the same name — a raw profile slug never reaches the visitor.
+- Every drawn bonsai has a **click-to-open** hit area (`data-tree-hit`) over its canopy: a click
+  resolves the agent to a profile route like the roster row and opens the conversation.
+- A black **name cartouche** under each pot (`data-tree-name`, avatar included, `pointer-events: none`)
+  signs the agent: `agentLabel` prefers the label the route ships, otherwise capitalises the profile,
+  so a raw slug never reaches the visitor.
+- **Conversation** on each row (`data-gesture="open"`): the name resolves to a route matching
+  `profile` or `targetProfile`, the most recent stored session resumes in place when one exists,
+  otherwise a new chat draft opens on that route.
+- **Stop** (`data-gesture="interrupt"`) appears only while that agent is busy, calls
+  `session.interrupt` with the runtime session id from `session.active_list`, and disappears after a
+  successful stop; refusals are reported as `not-busy`, `not-interrupted`, `no-route`, `unsupported`
+  or `failed`, never as a silent success.
 
-Each agent row carries an **open** gesture (`data-gesture="open"`, label *Conversation*): the agent name is resolved to a profile route, matching either `profile` or `targetProfile` so a bare `cloe` still finds `cloe@box`; the most recent stored session is resumed in place when one exists (`in-place` / `awaitHydration` / `forceResume`), otherwise a new chat draft is opened on that route. A **Stop** gesture (`data-gesture="interrupt"`) appears only while the agent is busy and calls `session.interrupt` with the runtime session id taken from `session.active_list`; it disappears after a successful stop. Refusals are reported honestly as `not-busy`, `not-interrupted`, `no-route`, `unsupported` or `failed` — never as a silent success.
+## Rendering, tools and season
 
-## Rendering
+Art positions are manifest coordinates used as percentages inside a responsive,
+aspect-ratio-preserving stage capped at 1340 px, with `image-rendering: pixelated`. No readout breaks
+mid-word: the widest unbreakable token (`Unavailable`) is asserted to fit the drawn frame's usable
+width.
 
-All art positions use manifest coordinates as percentages inside a responsive, aspect-ratio-preserving stage capped at 1340 px. Images use `image-rendering: pixelated` (no smoothing). Small containers reduce the whole scene without moving entities independently. HUD readouts are sized against the frame they sit in: the widest unbreakable token of a readout (`Unavailable`) is asserted to fit the drawn frame's usable width, so a value never breaks mid-word — a longer phrase wraps between words instead. Cream HUD text comes from the approved artwork palette, not the shell theme; shell text/background use real Desktop theme variables.
+The four readouts are **movable objects**, not painted labels: black plaques with agave-white type,
+placed from their measured `hud` anchor, clamped inside the drawn frame (`placeTool`), and keeping
+that anchor's width and height so the black covers the painted rectangle instead of shrinking onto
+its own text — only the position moves. Stacking order is fixed (`time` < `date` < `crons` <
+`cost`); the dragged plaque comes forward only under the finger, moves nothing else, and falls back
+into rank on release. Cream HUD text comes from the artwork palette; shell text and background use
+real Desktop theme variables.
 
-## Tools, season and the monthly line
-
-The four readout rectangles are **movable objects**, not painted labels: each one is a black plaque with agave-white type, taken from its measured `hud` anchor and clamped inside the drawn frame (`placeTool`), so it can never be dragged off the artwork. Each plaque keeps the width and height of that anchor, so the black rectangle covers the painted one instead of shrinking onto its own text; only its position moves. Their stacking order is fixed (`time` < `date` < `crons` < `cost`, `toolZ`); the plaque under the finger comes forward only while it is being dragged and falls back into its rank on release. Dragging a plaque moves nothing else — the season strip stays painted in the art.
-
-Season and month come from the local clock, in English and without locale guessing: `seasonOf`/`seasonLine` return `Autumn · November` (the season band is four cases: winter = December–February, spring = March–May, summer = June–August, autumn = September–November). One care line per month is appended to the footer strip from `assets/care-tips.json` through `careTip(art, now)` — the text is shipped with the artwork and read by month, never written at render time; a missing or blank line simply adds nothing to the footer. Only the page's own elements are rendered—no body observers or global DOM injection. Scoped timers dispose on page unmount and plugin unload.
+Season and month come from the local clock, in English and without locale guessing:
+`seasonOf`/`seasonLine` return `Autumn · November` (winter December–February, spring March–May,
+summer June–August, autumn September–November). One care line per month is read from the shipped
+`assets/care-tips.json` (`careTip(art, now)`) and appended to the footer strip; a blank or missing
+line adds nothing. Only the page's own elements are rendered — no body observers, no global DOM
+injection — and scoped timers dispose on unmount.
 
 ## Tests
-
-Run on this machine:
 
 ```sh
 node --test tests/plugin.test.mjs
 ```
 
-The test-only source transform injects fixture art or the actual `assets/scene.json`, and maps only the SDK boundary to a small stub. Tests execute the real source exports and actual React/ReactDOM/React Query using the existing Hermes installation's dependencies; no install is needed. Node module hooks require a modern Node release (`registerHooks`; verified on v26.8.1). JSDOM checks render structure, not browser pixel output.
+A test-only transform injects fixture art or the real `assets/scene.json` and maps only the SDK
+boundary to a small stub, so the real source exports and the existing Hermes React/ReactDOM/React
+Query are exercised without installing anything. Node module hooks need a modern Node release
+(`registerHooks`; verified on v26.8.1). JSDOM checks render structure, not browser pixels.
 
-Tests cover registration/navigation, the one-bonsai-per-agent roster projection (distinct sprites per agent, focused profile always placed, home rectangles inside the frame and non-overlapping), exact tree identity/home return, busy/idle transitions, null/invalid usage, real clock/date formatting, elapsed-time horizontal monk bounds, the cat's random spawn and clamped drag, both gestures (route resolution including `targetProfile`, resume-versus-new-chat, Stop only while busy, honest refusal codes), verified/read-only/stale-fenced titles, old-SDK fallback, live scoped routine collection (per-profile routes, failure and `scoped`-mismatch handling, script/one-shot/completed exclusion, suspended split) and its per-agent rendering, the movable tool plaques (fixed stacking order, clamped placement, the dragged one coming forward) and their mounted drag, the English season/month line, the approximate cost line (tilde only when tokens exist without dollars, a reported cost always winning), the agent signature (route label preferred, capitalised profile otherwise, never a raw slug), the monthly care tip read from the shipped art, mounted reactive host updates and timer cleanup — twenty-five tests in all. The last one re-derives `desktop/plugin.js` from `src/plugin.mjs` plus the three art files: the code is compared textually (a stale build fails the suite instead of shipping) and the embedded art structurally, because `JSON.parse` hoists the integer-like tip keys `10`–`12` in front of `01`–`09`. Red/green evidence and the report live under `/home/papa/Bureau/SESSIONS/2026-11-06/`.
+**Twenty-five tests**: registration and navigation; the one-bonsai-per-agent roster (distinct sprites,
+focused profile always placed, homes inside the frame and non-overlapping); tree identity and exact
+home return; busy/idle; null or invalid usage; clock and date formatting; the monk's walk; the cat's
+spawn and clamped drag; both row gestures and their refusal codes; verified, read-only, stale-fenced
+titles; the old-SDK fallback; live scoped routine collection and its rendering; the movable plaques
+and their mounted drag; the English season line; the approximate cost line; the agent signature; the
+monthly tip from the shipped art; reactive host updates with timer cleanup. The last test re-derives
+`desktop/plugin.js` from `src/plugin.mjs` and the three art files (code textually, so a stale build
+fails the suite; art structurally).
 
-## Attribution and boundaries
+Interaction notes: `docs/GESTES.md`. Build and deploy recipes, red/green evidence and measured art
+numbers: `/home/papa/Bureau/SESSIONS/`.
 
-Garden art/design: thehangingforest. Upstream inspiration and attribution retained: **office-3d**, Copyright (c) 2026 office-3d contributors, MIT License. This page is a separate SDK implementation, not a claim of authorship of office-3d. Both notices are kept in `LICENSE`; preserve them in any derived package. The shipped background is packed from `/home/papa/Bureau/BONSAI GARDEN 31.xcf` (sha256 `bad9db9f…`, recorded in the `assets/scene.json` provenance together with the edits made to it — the four painted black pavers were removed and the tool frames are opaque DOM plaques now) by `scripts/prepare_art31.py`; the earlier v3 XCF (`/home/papa/Bureau/BONSAI GARDEN 3.xcf`, sha256 `8c854dbd…`) remains the source of the tree/stand geometry and is asserted pixel-for-pixel. The source XCFs stay outside this package.
+## Attribution, sources and boundaries
 
-Routines read only each profile's own scoped cron store, on demand, through the public SDK; no CLI-global state, all-profile monitoring backend, season/weather service, inferred dollars or activity demo timers are included. Installed plugins and Hermes core remain untouched.
+Garden art and design: thehangingforest. Upstream attribution retained: **office-3d**, Copyright (c)
+2026 office-3d contributors, MIT License — this page is a separate SDK implementation, not a claim of
+authorship of office-3d. Both notices live in `LICENSE`; keep them in any derived package. The
+background is packed by `scripts/prepare_art31.py` from the artist's `BONSAI GARDEN 31.xcf` (sha256
+`bad9db9f…`, edits recorded in the scene provenance: the four painted black pavers removed, the tool
+frames now opaque DOM plaques); the earlier v3 XCF (`8c854dbd…`) remains the source of the tree and
+stand geometry, asserted pixel-for-pixel. The source XCFs stay outside this package.
+
+Routines read only each profile's own scoped cron store, on demand, through the public SDK: no
+CLI-global state, no all-profile monitoring backend, no season or weather service, no inferred
+dollars, no activity demo timers. Installed plugins and Hermes core stay untouched.
